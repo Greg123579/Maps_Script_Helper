@@ -1,0 +1,14 @@
+{
+  "session_id": "caf56b3e-8c87-4628-b195-4584f9beca67",
+  "created_at": "2025-12-20T22:30:59.454731",
+  "attempts": [
+    {
+      "log_id": "caf56b3e-8c87-4628-b195-4584f9beca67",
+      "timestamp": "2025-12-20T22:30:59.454745",
+      "status": "success"
+    }
+  ],
+  "status": "resolved",
+  "resolved_at": "2025-12-20T22:30:59.454749",
+  "updated_at": "2025-12-20T22:30:59.454750"
+}

@@ -1,0 +1,77 @@
+<svg 
+  width="256" 
+  height="256" 
+  viewBox="0 0 256 256" 
+  xmlns="http://www.w3.org/2000/svg" 
+  role="img" 
+  aria-labelledby="maps-ai-title maps-ai-desc"
+>
+  <title id="maps-ai-title">MAPS AI Scripting Assistant Logo</title>
+  <desc id="maps-ai-desc">Robot chat bubble icon with classic TV antennas and balanced two-line title text.</desc>
+
+  <defs>
+    <linearGradient id="bubbleStroke" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1D4ED8"/>
+      <stop offset="100%" stop-color="#0B1F6A"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="256" height="256" fill="none"/>
+
+  <!-- TV-style antennas -->
+  <line x1="128" y1="72" x2="88" y2="40"
+        stroke="url(#bubbleStroke)" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="82" cy="34" r="8" fill="#1D4ED8"/>
+
+  <line x1="128" y1="72" x2="168" y2="40"
+        stroke="url(#bubbleStroke)" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="174" cy="34" r="8" fill="#1D4ED8"/>
+
+  <!-- Chat bubble / robot head -->
+  <path d="
+    M 64 80
+    H 192
+    C 210 80 224 94 224 112
+    V 138
+    C 224 156 210 170 192 170
+    H 122
+    L 100 190
+    L 100 170
+    H 64
+    C 46 170 32 156 32 138
+    V 112
+    C 32 94 46 80 64 80
+    Z"
+    fill="none"
+    stroke="url(#bubbleStroke)"
+    stroke-width="10"
+    stroke-linejoin="round"
+  />
+
+  <!-- Eyes -->
+  <circle cx="96" cy="125" r="14" fill="#1D4ED8"/>
+  <circle cx="160" cy="125" r="14" fill="#1D4ED8"/>
+
+  <!-- Title Line 1: MAPS AI -->
+  <text x="50%" y="230"
+        text-anchor="middle"
+        font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+        font-size="42"
+        font-weight="700"
+        fill="#1D4ED8">
+    MAPS AI
+  </text>
+
+  <!-- Title Line 2: SCRIPTING ASSISTANT -->
+  <text x="50%" y="248"
+        text-anchor="middle"
+        font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+        font-size="14"
+        font-weight="700"
+        letter-spacing="2.8"
+        fill="#1D4ED8">
+    SCRIPTING ASSISTANT
+  </text>
+</svg>
+
+

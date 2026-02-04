@@ -1,0 +1,28 @@
+{
+  "generated_at": "2025-12-20T22:38:11.660729",
+  "summary": {
+    "total_failures": 0,
+    "total_successes": 9,
+    "unfixed_failures": 0,
+    "fixed_failures": 0,
+    "overall_success_rate": 100.0,
+    "recent_success_rate_7d": 100.0,
+    "recent_attempts_7d": 9
+  },
+  "error_patterns": [],
+  "common_errors": [],
+  "fix_strategies": [],
+  "library_issues": {
+    "libraries_with_issues": []
+  },
+  "mapbridge_issues": {
+    "request_type_errors": 0,
+    "stdin_parsing_errors": 0,
+    "output_errors": 0,
+    "channel_errors": 0,
+    "other_errors": 0,
+    "examples": []
+  },
+  "recommendations": [],
+  "ai_learning_summary": "=== SCRIPT GENERATION LEARNINGS FROM EXECUTION LOGS ===\n\n=== END LEARNINGS ==="
+}

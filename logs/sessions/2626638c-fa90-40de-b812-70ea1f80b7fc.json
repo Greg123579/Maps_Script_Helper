@@ -1,0 +1,14 @@
+{
+  "session_id": "2626638c-fa90-40de-b812-70ea1f80b7fc",
+  "created_at": "2025-12-20T22:30:45.337735",
+  "attempts": [
+    {
+      "log_id": "2626638c-fa90-40de-b812-70ea1f80b7fc",
+      "timestamp": "2025-12-20T22:30:45.337751",
+      "status": "success"
+    }
+  ],
+  "status": "resolved",
+  "resolved_at": "2025-12-20T22:30:45.337754",
+  "updated_at": "2025-12-20T22:30:45.337755"
+}

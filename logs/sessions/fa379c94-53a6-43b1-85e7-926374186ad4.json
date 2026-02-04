@@ -1,0 +1,13 @@
+{
+  "session_id": "fa379c94-53a6-43b1-85e7-926374186ad4",
+  "created_at": "2025-12-21T11:57:05.591224",
+  "attempts": [
+    {
+      "log_id": "fa379c94-53a6-43b1-85e7-926374186ad4",
+      "timestamp": "2025-12-21T11:57:05.591258",
+      "status": "failed"
+    }
+  ],
+  "status": "in_progress",
+  "updated_at": "2025-12-21T11:57:05.591271"
+}

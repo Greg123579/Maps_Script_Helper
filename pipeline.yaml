@@ -1,0 +1,56 @@
+containerBuild:
+  imageName: maps-ai-script-helper
+
+deployment: 
+  name: maps-ai-script-helper
+  namespace: maps-data-analysis
+  cpu: 250m
+  limitCpu: 1000m
+  memory: 512Mi 
+  limitMemory: 2Gi
+  replicas: 1
+  containerPort: 8080
+  healthCheckPath: /health
+  healthCheckPort: 8080
+  healthCheckType: 'http'
+  ingressPath: /
+  iamRole: tfstack-maps-data-analysis
+  serviceAccount: tfstack-maps-data-analysis
+  labels:
+    stack: python
+    component: backend
+    sub_application: maps-ai-script-helper
+    part_of: greg.clark
+    stack_version: 1.0
+    application_owner: greg.clark2@thermofisher.com
+    costcenter: 1100369R_MSHILLSBORO 
+    website: www.thermofisher.com
+
+environments:
+  dev:
+    branch: main
+    cluster: tfcom-cluster-naw-rapidqa1.cloudqa.thermofisher.net
+    ingressDomains:
+      - maps-ai-script-helper.tfcom-cluster-naw-rapidqa1.cloudqa.thermofisher.net
+    deployment:
+        volumeMounts:
+        - name: outputs
+          mountPath: /app/outputs
+        - name: library
+          mountPath: /app/library
+        - name: assets
+          mountPath: /app/assets
+        - name: logs
+          mountPath: /app/logs
+        - name: deploy
+          mountPath: /deploy
+        - name: user-jobs
+          mountPath: /app/user_jobs.json
+          subPath: user_jobs.json
+    env:
+    - name: PYTHONUNBUFFERED
+      value: "1"
+    - name: TZ
+      value: "America/Los_Angeles"
+    - name: HOST_PROJECT_DIR
+      value: "/app"

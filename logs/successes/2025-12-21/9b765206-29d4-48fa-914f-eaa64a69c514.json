@@ -1,0 +1,30 @@
+{
+  "log_id": "9b765206-29d4-48fa-914f-eaa64a69c514",
+  "session_id": "9b765206-29d4-48fa-914f-eaa64a69c514",
+  "timestamp": "2025-12-21T10:02:39.653057",
+  "status": "success",
+  "code": "# MAPS Script Bridge Example - Simple Copy\r\n# Copies input to output (single channel)\r\n\r\nimport os\r\nimport tempfile\r\nimport MapsBridge\r\nfrom PIL import Image\r\n\r\ndef main():\r\n    # 1. Get input\r\n    request = MapsBridge.ScriptTileSetRequest.FromStdIn()\r\n    sourceTileSet = request.SourceTileSet\r\n    tileInfo = sourceTileSet.Tiles[0]\r\n    \r\n    # 2. Load image\r\n    input_filename = tileInfo.ImageFileNames[\"0\"]\r\n    input_path = os.path.join(sourceTileSet.DataFolderPath, input_filename)\r\n    img = Image.open(input_path)\r\n    \r\n    MapsBridge.LogInfo(f\"Processing: {input_filename}\")\r\n    \r\n    # 3. Save to temp (no processing)\r\n    output_folder = os.path.join(tempfile.gettempdir(), \"copy_output\")\r\n    os.makedirs(output_folder, exist_ok=True)\r\n    output_path = os.path.join(output_folder, input_filename)\r\n    img.save(output_path)\r\n    \r\n    # 4. Create output\r\n    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(\r\n        \"Copy of \" + sourceTileSet.Name,\r\n        targetLayerGroupName=\"Outputs\"\r\n    )\r\n    \r\n    # 5. Send output\r\n    MapsBridge.CreateChannel(\"Copy\", (255, 255, 255), True, outputTileSetInfo.TileSet.Guid)\r\n    MapsBridge.SendSingleTileOutput(\r\n        tileInfo.Row, tileInfo.Column,\r\n        \"Copy\", output_path, True, outputTileSetInfo.TileSet.Guid\r\n    )\r\n    \r\n    MapsBridge.AppendNotes(\"Image copied without modification\")\r\n\r\nif __name__ == \"__main__\":\r\n    main()\r\n",
+  "code_hash": "85661bd288e980d3",
+  "user_prompt": null,
+  "ai_model": null,
+  "image_filename": "image.jpg",
+  "error_message": null,
+  "error_type": null,
+  "stderr": null,
+  "stdout": "============================================================\n[DEBUG] job_runner.py starting...\n[DEBUG] Python version: 3.11.14 (main, Dec  8 2025, 23:39:47) [GCC 14.2.0]\n[DEBUG] Working directory: /work\n[DEBUG] PYTHONPATH: /work\n============================================================\n[DEBUG] Checking /output directory...\n[DEBUG] /output exists\n[DEBUG] Contents of /output BEFORE script execution:\n[DEBUG]   - .matplotlib (is_file=False)\n[DEBUG] Contents of /input:\n[DEBUG]   - image.jpg (is_file=True)\n[DEBUG] Importing skimage and matplotlib...\n[DEBUG] Imports complete\n[DEBUG] Checking MapsBridge availability...\n[DEBUG] MapsBridge imported successfully from: /work/MapsBridge.py\n[DEBUG] main() starting...\n[DEBUG] Found code file: /code/main.py\n[DEBUG] Code to execute (1364 chars):\n----------------------------------------\n[DEBUG]   1: # MAPS Script Bridge Example - Simple Copy\n[DEBUG]   2: # Copies input to output (single channel)\n[DEBUG]   3: \n[DEBUG]   4: import os\n[DEBUG]   5: import tempfile\n[DEBUG]   6: import MapsBridge\n[DEBUG]   7: from PIL import Image\n[DEBUG]   8: \n[DEBUG]   9: def main():\n[DEBUG]  10:     # 1. Get input\n[DEBUG]  11:     request = MapsBridge.ScriptTileSetRequest.FromStdIn()\n[DEBUG]  12:     sourceTileSet = request.SourceTileSet\n[DEBUG]  13:     tileInfo = sourceTileSet.Tiles[0]\n[DEBUG]  14:     \n[DEBUG]  15:     # 2. Load image\n[DEBUG]  16:     input_filename = tileInfo.ImageFileNames[\"0\"]\n[DEBUG]  17:     input_path = os.path.join(sourceTileSet.DataFolderPath, input_filename)\n[DEBUG]  18:     img = Image.open(input_path)\n[DEBUG]  19:     \n[DEBUG]  20:     MapsBridge.LogInfo(f\"Processing: {input_filename}\")\n[DEBUG] ... (25 more lines)\n----------------------------------------\n[DEBUG] Executing user code...\n[DEBUG] __name__ set to: __main__\n[MapsBridge DEBUG] ScriptTileSetRequest.FromStdIn() called\n[MapsBridge DEBUG] Input directory: /input, exists: True\n[MapsBridge DEBUG] Total image files found: 1\n[MapsBridge DEBUG] Extracted image metadata: 1512x2016, format=Bgr24\n[MapsBridge DEBUG] Created ScriptTileSetRequest with 1 tiles\n[INFO] Processing: image.jpg\n[INFO] Created output tile set: Copy of LocalTestTileSet (Guid: {CD49906E-67BC-4802-B25C-F7F46FACDBAA})\n[INFO] Created channel: Copy with color (255, 255, 255)\n[MapsBridge DEBUG] SendSingleTileOutput() called:\n[MapsBridge DEBUG]   tileRow=1, tileColumn=1\n[MapsBridge DEBUG]   targetChannelName='Copy'\n[MapsBridge DEBUG]   imageFilePath='/tmp/copy_output/image.jpg'\n[INFO] Output saved: Copy_image.jpg (Channel: Copy, Tile: [1, 1])\n[NOTE] Image copied without modification\n[DEBUG] User code execution completed successfully\n[DEBUG] Contents of /output AFTER script execution:\n[DEBUG]   - .matplotlib/ (directory)\n[DEBUG]   - Copy_image.jpg (442578 bytes)\n[DEBUG] job_runner.py finished\n",
+  "return_code": null,
+  "output_files": [
+    "Copy_image.jpg"
+  ],
+  "execution_time_seconds": 1.7497825622558594,
+  "previous_attempt_id": null,
+  "fixed_by": null,
+  "error_category": null,
+  "tags": [
+    "lib:MapsBridge",
+    "lib:PIL",
+    "request_type:tileset",
+    "output:tile",
+    "output:channel"
+  ]
+}

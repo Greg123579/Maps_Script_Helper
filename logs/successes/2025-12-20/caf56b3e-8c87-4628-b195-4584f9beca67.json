@@ -1,0 +1,32 @@
+{
+  "log_id": "caf56b3e-8c87-4628-b195-4584f9beca67",
+  "session_id": "caf56b3e-8c87-4628-b195-4584f9beca67",
+  "timestamp": "2025-12-20T22:30:59.430828",
+  "status": "success",
+  "code": "# MAPS Script Bridge Example - Viridis Colormap\r\nimport os\r\nimport tempfile\r\nimport MapsBridge\r\nfrom PIL import Image\r\nimport numpy as np\r\nimport matplotlib.pyplot as plt\r\n\r\ndef main():\r\n    request = MapsBridge.ScriptTileSetRequest.FromStdIn()\r\n    sourceTileSet = request.SourceTileSet\r\n    tileInfo = sourceTileSet.Tiles[0]\r\n    \r\n    input_filename = tileInfo.ImageFileNames[\"0\"]\r\n    input_path = os.path.join(sourceTileSet.DataFolderPath, input_filename)\r\n    img = Image.open(input_path).convert(\"L\")\r\n    gray_array = np.array(img)\r\n    \r\n    MapsBridge.LogInfo(f\"Applying viridis colormap to {input_filename}\")\r\n    \r\n    # Apply viridis colormap\r\n    normalized = gray_array.astype(np.float32) / 255.0\r\n    cmap = plt.get_cmap('viridis')\r\n    colored = cmap(normalized)\r\n    rgb_array = (colored[:, :, :3] * 255).astype(np.uint8)\r\n    \r\n    # Save\r\n    output_folder = os.path.join(tempfile.gettempdir(), \"viridis_output\")\r\n    os.makedirs(output_folder, exist_ok=True)\r\n    base, ext = os.path.splitext(input_filename)\r\n    output_path = os.path.join(output_folder, f\"{base}_viridis.png\")\r\n    \r\n    Image.fromarray(rgb_array, mode=\"RGB\").save(output_path)\r\n    \r\n    # Create output\r\n    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(\r\n        \"Viridis \" + sourceTileSet.Name,\r\n        targetLayerGroupName=\"Outputs\"\r\n    )\r\n    \r\n    MapsBridge.CreateChannel(\"Viridis\", (255, 255, 255), True, outputTileSetInfo.TileSet.Guid)\r\n    MapsBridge.SendSingleTileOutput(\r\n        tileInfo.Row, tileInfo.Column,\r\n        \"Viridis\", output_path, True, outputTileSetInfo.TileSet.Guid\r\n    )\r\n    \r\n    MapsBridge.AppendNotes(\"Applied Viridis colormap\")\r\n\r\nif __name__ == \"__main__\":\r\n    main()\r\n",
+  "code_hash": "a2e133fdce68767d",
+  "user_prompt": null,
+  "ai_model": null,
+  "image_filename": "image.jpg",
+  "error_message": null,
+  "error_type": null,
+  "stderr": null,
+  "stdout": "============================================================\n[DEBUG] job_runner.py starting...\n[DEBUG] Python version: 3.11.14 (main, Dec  8 2025, 23:39:47) [GCC 14.2.0]\n[DEBUG] Working directory: /work\n[DEBUG] PYTHONPATH: /work\n============================================================\n[DEBUG] Checking /output directory...\n[DEBUG] /output exists\n[DEBUG] Contents of /output BEFORE script execution:\n[DEBUG]   - .matplotlib (is_file=False)\n[DEBUG] Contents of /input:\n[DEBUG]   - image.jpg (is_file=True)\n[DEBUG] Importing skimage and matplotlib...\n[DEBUG] Imports complete\n[DEBUG] Checking MapsBridge availability...\n[DEBUG] MapsBridge imported successfully from: /work/MapsBridge.py\n[DEBUG] main() starting...\n[DEBUG] Found code file: /code/main.py\n[DEBUG] Code to execute (1658 chars):\n----------------------------------------\n[DEBUG]   1: # MAPS Script Bridge Example - Viridis Colormap\n[DEBUG]   2: import os\n[DEBUG]   3: import tempfile\n[DEBUG]   4: import MapsBridge\n[DEBUG]   5: from PIL import Image\n[DEBUG]   6: import numpy as np\n[DEBUG]   7: import matplotlib.pyplot as plt\n[DEBUG]   8: \n[DEBUG]   9: def main():\n[DEBUG]  10:     request = MapsBridge.ScriptTileSetRequest.FromStdIn()\n[DEBUG]  11:     sourceTileSet = request.SourceTileSet\n[DEBUG]  12:     tileInfo = sourceTileSet.Tiles[0]\n[DEBUG]  13:     \n[DEBUG]  14:     input_filename = tileInfo.ImageFileNames[\"0\"]\n[DEBUG]  15:     input_path = os.path.join(sourceTileSet.DataFolderPath, input_filename)\n[DEBUG]  16:     img = Image.open(input_path).convert(\"L\")\n[DEBUG]  17:     gray_array = np.array(img)\n[DEBUG]  18:     \n[DEBUG]  19:     MapsBridge.LogInfo(f\"Applying viridis colormap to {input_filename}\")\n[DEBUG]  20:     \n[DEBUG] ... (31 more lines)\n----------------------------------------\n[DEBUG] Executing user code...\n[DEBUG] __name__ set to: __main__\n[MapsBridge DEBUG] ScriptTileSetRequest.FromStdIn() called\n[MapsBridge DEBUG] Input directory: /input, exists: True\n[MapsBridge DEBUG] Total image files found: 1\n[MapsBridge DEBUG] Extracted image metadata: 1512x2016, format=Bgr24\n[MapsBridge DEBUG] Created ScriptTileSetRequest with 1 tiles\n[INFO] Applying viridis colormap to image.jpg\n[INFO] Created output tile set: Viridis LocalTestTileSet (Guid: {D79353F6-79DB-4121-8931-0DBE8E5A5D46})\n[INFO] Created channel: Viridis with color (255, 255, 255)\n[MapsBridge DEBUG] SendSingleTileOutput() called:\n[MapsBridge DEBUG]   tileRow=1, tileColumn=1\n[MapsBridge DEBUG]   targetChannelName='Viridis'\n[MapsBridge DEBUG]   imageFilePath='/tmp/viridis_output/image_viridis.png'\n[INFO] Output saved: Viridis_image_viridis.png (Channel: Viridis, Tile: [1, 1])\n[NOTE] Applied Viridis colormap\n[DEBUG] User code execution completed successfully\n[DEBUG] Contents of /output AFTER script execution:\n[DEBUG]   - .matplotlib/ (directory)\n[DEBUG]   - Viridis_image_viridis.png (4040527 bytes)\n[DEBUG] job_runner.py finished\n",
+  "return_code": null,
+  "output_files": [
+    "Viridis_image_viridis.png"
+  ],
+  "execution_time_seconds": 3.1999425888061523,
+  "previous_attempt_id": null,
+  "fixed_by": null,
+  "error_category": null,
+  "tags": [
+    "lib:MapsBridge",
+    "lib:numpy",
+    "lib:matplotlib",
+    "lib:PIL",
+    "request_type:tileset",
+    "output:tile",
+    "output:channel"
+  ]
+}

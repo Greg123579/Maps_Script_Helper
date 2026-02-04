@@ -1,0 +1,74 @@
+{
+  "603004d3-37be-4522-a154-d0212d28d3ae": {
+    "id": "603004d3-37be-4522-a154-d0212d28d3ae",
+    "name": "test",
+    "description": "test",
+    "type": "SDB",
+    "filename": "603004d3-37be-4522-a154-d0212d28d3ae.png",
+    "uploaded_at": "1763528022.8051262"
+  },
+  "ac889bd0-62d2-4590-ae66-7fd335c7cfe9": {
+    "id": "ac889bd0-62d2-4590-ae66-7fd335c7cfe9",
+    "name": "test2",
+    "description": "asdf",
+    "type": "TEM",
+    "filename": "ac889bd0-62d2-4590-ae66-7fd335c7cfe9.jpg",
+    "uploaded_at": "1763528049.7172027"
+  },
+  "a4e5f1ae-25e9-4d10-97fb-e9eb284b0d2e": {
+    "id": "a4e5f1ae-25e9-4d10-97fb-e9eb284b0d2e",
+    "name": "Tile_013-001-000000_0-000",
+    "description": "",
+    "type": "SEM",
+    "filename": "a4e5f1ae-25e9-4d10-97fb-e9eb284b0d2e.tif",
+    "uploaded_at": "1763529576.501111"
+  },
+  "a4cce291-e1aa-4ca2-8b92-5fb5b231f9dc": {
+    "id": "a4cce291-e1aa-4ca2-8b92-5fb5b231f9dc",
+    "name": "tile_1",
+    "description": "",
+    "type": "SEM",
+    "filename": "a4cce291-e1aa-4ca2-8b92-5fb5b231f9dc.tif",
+    "uploaded_at": "1763529651.9807656"
+  },
+  "ddc4d7a9-d096-4415-a46b-f4cb902d6d25": {
+    "id": "ddc4d7a9-d096-4415-a46b-f4cb902d6d25",
+    "name": "Electron Snapshot (4)",
+    "description": "",
+    "type": "SEM",
+    "filename": "ddc4d7a9-d096-4415-a46b-f4cb902d6d25.tiff",
+    "uploaded_at": "1763532976.1489089"
+  },
+  "8da1cf25-0aff-4a1c-b2c0-bfa7920604c0": {
+    "id": "8da1cf25-0aff-4a1c-b2c0-bfa7920604c0",
+    "name": "Tile_004-003-000000_0-000.s0001_e00",
+    "description": "",
+    "type": "SEM",
+    "filename": "8da1cf25-0aff-4a1c-b2c0-bfa7920604c0.tif",
+    "uploaded_at": "1764716896.8132684"
+  },
+  "4823eed4-47b0-4402-8229-416547908098": {
+    "id": "4823eed4-47b0-4402-8229-416547908098",
+    "name": "Tile_004-003-000000_2-000.s0001_e00",
+    "description": "test",
+    "type": "SEM",
+    "filename": "4823eed4-47b0-4402-8229-416547908098.tif",
+    "uploaded_at": "1764805314.941118"
+  },
+  "73d2dbdd-67db-48f2-a84a-29ec5539f760": {
+    "id": "73d2dbdd-67db-48f2-a84a-29ec5539f760",
+    "name": "CIGS (no CdS) FIB02 171019-Img_0013(CL6) crop",
+    "description": "Chin Data",
+    "type": "TEM",
+    "filename": "73d2dbdd-67db-48f2-a84a-29ec5539f760.jpg",
+    "uploaded_at": "1764899984.0996096"
+  },
+  "85434ce8-b2f1-4001-b130-943beef56bac": {
+    "id": "85434ce8-b2f1-4001-b130-943beef56bac",
+    "name": "optical",
+    "description": "optical",
+    "type": "SEM",
+    "filename": "85434ce8-b2f1-4001-b130-943beef56bac.tif",
+    "uploaded_at": "1765926495.9877172"
+  }
+}

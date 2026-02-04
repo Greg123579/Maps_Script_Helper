@@ -1,0 +1,39 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maps-python-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount project directory for auto-reload
+      - .:/app
+      # Mount outputs directory (persist outputs)
+      - ./outputs:/app/outputs
+      # Mount library directory (persist library images)
+      - ./library:/app/library
+      # Mount assets directory
+      - ./assets:/app/assets
+      # Mount user_jobs.json (ensure it exists as a file before mounting)
+      - ./user_jobs.json:/app/user_jobs.json
+      # Mount Docker socket so container can run docker commands
+      # For Windows Docker Desktop, this uses the named pipe
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount deploy directory (where scripts will be deployed)
+      # This maps to C:\project\Python on the host
+      - C:\project\Python:/deploy
+    environment:
+      - PYTHONUNBUFFERED=1
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - HOST_PROJECT_DIR=C:\project\Maps_Python_Script_Helper\Maps_Python_Script_Helper
+      - TZ=America/Los_Angeles
+    restart: unless-stopped
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+

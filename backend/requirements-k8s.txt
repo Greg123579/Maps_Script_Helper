@@ -1,0 +1,2 @@
+# Add kubernetes client (optional - only needed for Kubernetes runtime)
+kubernetes>=28.1.0

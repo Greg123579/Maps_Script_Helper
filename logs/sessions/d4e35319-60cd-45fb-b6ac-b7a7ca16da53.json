@@ -1,0 +1,14 @@
+{
+  "session_id": "d4e35319-60cd-45fb-b6ac-b7a7ca16da53",
+  "created_at": "2025-12-21T11:52:25.345522",
+  "attempts": [
+    {
+      "log_id": "d4e35319-60cd-45fb-b6ac-b7a7ca16da53",
+      "timestamp": "2025-12-21T11:52:25.345548",
+      "status": "success"
+    }
+  ],
+  "status": "resolved",
+  "resolved_at": "2025-12-21T11:52:25.345554",
+  "updated_at": "2025-12-21T11:52:25.345557"
+}
