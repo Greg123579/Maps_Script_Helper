@@ -58,6 +58,7 @@ API_VERSION = "1.16.1"  # Added OpenCV support, improved system context with log
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
+    print(f"Key: {GOOGLE_API_KEY}")
     print("✓ Gemini AI configured successfully")
 else:
     print("⚠ Warning: GOOGLE_API_KEY not set. AI Assistant will not work.")
@@ -1261,6 +1262,7 @@ async def chat_with_ai(request: ChatRequest):
     """
     # Require user-provided API key - no server default fallback
     if not request.api_key:
+        print(f"request: {request}")
         return JSONResponse(
             {"error": "AI Assistant requires an API key. Please set your Gemini API key in the Settings tab."},
             status_code=403
