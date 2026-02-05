@@ -79,9 +79,4 @@ environments:
       value: "America/Los_Angeles"
     - name: HOST_PROJECT_DIR
       value: "/app"
-    - name: GOOGLE_API_KEY
-      key: GOOGLE_API_KEY
-      secretname: maps-data-analysis-ai-api-keys
-    - name: OPENAI_API_KEY
-      key: OPENAI_API_KEY
-      secretname: maps-data-analysis-ai-api-keys
+
