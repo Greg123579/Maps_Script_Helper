@@ -37,17 +37,41 @@ environments:
         volumeMounts:
         - name: outputs
           mountPath: /app/outputs
+          volume:
+            type: persistentVolumeClaim
+            properties:
+              claimName: maps-outputs         
         - name: library
           mountPath: /app/library
+          volume:
+            type: persistentVolumeClaim
+            properties:
+              claimName: maps-library          
         - name: assets
           mountPath: /app/assets
+          volume:
+            type: persistentVolumeClaim
+            properties:
+              claimName: maps-assets          
         - name: logs
           mountPath: /app/logs
+          volume:
+            type: persistentVolumeClaim
+            properties:
+              claimName: maps-logs          
         - name: deploy
           mountPath: /deploy
-        - name: user-jobs
-          mountPath: /app/user_jobs.json
-          subPath: user_jobs.json
+          volume:
+            type: persistentVolumeClaim
+            properties:
+              claimName: maps-deploy          
+        # - name: user-jobs
+        #   mountPath: /app/user_jobs.json
+        #   subPath: user_jobs.json
+        #   volume:
+        #     type: persistentVolumeClaim
+        #     properties:
+        #       claimName: maps-jobs          
     env:
     - name: PYTHONUNBUFFERED
       value: "1"
