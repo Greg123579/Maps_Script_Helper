@@ -27,7 +27,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY . /app
 
 # Expose port
-EXPOSE 8000
+EXPOSE 8080
 
 # Run uvicorn without reload for now (outputs directory changes were causing issues)
 # For development with code changes, restart the container manually
