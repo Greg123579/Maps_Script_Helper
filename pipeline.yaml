@@ -55,30 +55,9 @@ environments:
       value: "America/Los_Angeles"
     - name: HOST_PROJECT_DIR
       value: "/app"
-  qa:
-    branch: main
-    cluster: tfcom-cluster-naw-rapidqa1.cloudqa.thermofisher.net
-    ingressDomains:
-      - maps-ai-script-helper.tfcom-cluster-naw-rapidqa1.cloudqa.thermofisher.net
-    deployment:
-        volumeMounts:
-        - name: outputs
-          mountPath: /app/outputs
-        - name: library
-          mountPath: /app/library
-        - name: assets
-          mountPath: /app/assets
-        - name: logs
-          mountPath: /app/logs
-        - name: deploy
-          mountPath: /deploy
-        - name: user-jobs
-          mountPath: /app/user_jobs.json
-          subPath: user_jobs.json
-    env:
-    - name: PYTHONUNBUFFERED
-      value: "1"
-    - name: TZ
-      value: "America/Los_Angeles"
-    - name: HOST_PROJECT_DIR
-      value: "/app"
+    - name: GOOGLE_API_KEY
+      key: GOOGLE_API_KEY
+      secretname: maps-data-analysis-ai-api-keys
+    - name: OPENAI_API_KEY
+      key: OPENAI_API_KEY
+      secretname: maps-data-analysis-ai-api-keys

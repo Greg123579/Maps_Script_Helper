@@ -35,6 +35,3 @@ outputs/
 
 # Node modules (if any)
 node_modules/
-
-# Docker
-.dockerignore
