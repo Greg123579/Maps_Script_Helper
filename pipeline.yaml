@@ -80,7 +80,7 @@ environments:
     - name: SCRIPT_TIMEOUT
       value: "600"
     - name: SKIP_AUTO_SEED
-      value: "true"  # Using pre-populated database from image
+      value: "false"  # Auto-seed database with library scripts on startup
     - name: GOOGLE_API_KEY
       key: GOOGLE_API_KEY
       secretname: maps-data-analysis-ai-api-keys
