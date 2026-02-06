@@ -16,7 +16,9 @@ except ImportError:
 
 # Database configuration
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
-DATABASE_PATH = BASE_DIR / "maps_helper.db"
+# Allow DATABASE_PATH to be configured via environment variable (e.g., for PVC storage on AWS)
+# Defaults to project root (maps_helper.db) for local/Docker Desktop development
+DATABASE_PATH = pathlib.Path(os.getenv("DATABASE_PATH", str(BASE_DIR / "maps_helper.db")))
 DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
 # Create engine with SQLite-specific optimizations

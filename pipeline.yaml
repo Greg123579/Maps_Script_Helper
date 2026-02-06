@@ -79,6 +79,8 @@ environments:
       value: "py-exec:latest"
     - name: SCRIPT_TIMEOUT
       value: "600"
+    - name: DATABASE_PATH
+      value: "/deploy/maps_helper.db"
     - name: SKIP_AUTO_SEED
       value: "false"  # Auto-seed database with library scripts on startup
     - name: GOOGLE_API_KEY
