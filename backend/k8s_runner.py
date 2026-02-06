@@ -273,7 +273,7 @@ def get_runner() -> KubernetesRunner:
     """Get or create the Kubernetes runner instance."""
     global _runner
     if _runner is None:
-        namespace = os.getenv("KUBERNETES_NAMESPACE", "maps-python")
+        namespace = os.getenv("KUBERNETES_NAMESPACE", "maps-data-analysis")
         runner_image = os.getenv("RUNNER_IMAGE", "py-exec:latest")
         timeout = int(os.getenv("SCRIPT_TIMEOUT", "600"))
         _runner = KubernetesRunner(namespace, runner_image, timeout)

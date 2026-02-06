@@ -29,30 +29,18 @@ except ImportError:
     from database import get_db, init_database
     from models import User, UserScript, LibraryImage, UserImage, LibraryScript, ExecutionSession
 
-# Determine execution runtime (Docker or Kubernetes)
-EXECUTION_RUNTIME = os.getenv("EXECUTION_RUNTIME", "docker").lower()
-k8s_runner = None
-
-if EXECUTION_RUNTIME == "kubernetes":
-    try:
-        try:
-            from backend.k8s_runner import KubernetesRunner
-        except ImportError:
-            from k8s_runner import KubernetesRunner
-        
-        k8s_runner = KubernetesRunner()
-        print("✓ Using Kubernetes runtime for script execution")
-    except Exception as e:
-        print(f"⚠ Warning: Failed to initialize Kubernetes runner: {e}")
-        print("  Falling back to Docker runtime")
-        EXECUTION_RUNTIME = "docker"
-        k8s_runner = None
-
-if k8s_runner is None:
-    print("✓ Using Docker runtime for script execution")
+# Always use Kubernetes runtime
+try:
+    from backend.k8s_runner import get_runner
+    k8s_runner = get_runner()
+    print("✓ Using Kubernetes runtime for script execution")
+except Exception as e:
+    print(f"✗ ERROR: Failed to initialize Kubernetes runner: {e}")
+    traceback.print_exc()
+    raise RuntimeError("Kubernetes runner initialization failed. Cannot start backend.") from e
 
 # Version tracking
-API_VERSION = "1.16.1"  # Added OpenCV support, improved system context with logging analysis, enhanced error prevention
+API_VERSION = "1.17.0"  # Kubernetes-only runtime, auto-seeding of library scripts and images on startup
 
 # Configure Gemini AI
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
@@ -80,8 +68,7 @@ def _get_py_exec_pip_packages(max_age_seconds: int = 600) -> dict[str, str]:
     """
     Return pip packages installed in the script execution sandbox image (py-exec:latest).
 
-    We query via Docker because the backend environment is NOT the script execution environment.
-    Cached for max_age_seconds to avoid doing a docker call per chat request.
+    Reads from requirements.txt file. Cached for max_age_seconds to avoid repeated file reads.
     """
     now = time.time()
     cached = _PY_EXEC_PIP_CACHE.get("packages")
@@ -89,31 +76,30 @@ def _get_py_exec_pip_packages(max_age_seconds: int = 600) -> dict[str, str]:
         return cached
 
     try:
-        # Ask the py-exec image for its installed packages as JSON.
-        # Use python -m pip to avoid relying on shell tools.
-        cmd = [
-            "docker", "run", "--rm",
-            "--entrypoint", "python",
-            "py-exec:latest",
-            "-m", "pip", "list", "--format=json",
-        ]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if r.returncode != 0:
-            raise RuntimeError(r.stderr.strip()[:500] or "docker pip list failed")
-        data = json.loads(r.stdout or "[]")
-        pkgs: dict[str, str] = {}
-        for item in data:
-            name = str(item.get("name", "")).strip()
-            version = str(item.get("version", "")).strip()
-            if name:
-                pkgs[name] = version
-        if pkgs:
-            _PY_EXEC_PIP_CACHE["generated_at"] = now
-            _PY_EXEC_PIP_CACHE["packages"] = pkgs
-            return pkgs
-    except Exception:
-        # Fall back to requirements parsing (best-effort)
-        return {}
+        # Read from requirements file (more reliable than querying a pod)
+        req_path = BASE_DIR / "backend" / "runner_image" / "requirements.txt"
+        if req_path.exists():
+            pkgs: dict[str, str] = {}
+            for line in req_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # Parse "package==version" or just "package"
+                if "==" in line:
+                    name, version = line.split("==", 1)
+                    pkgs[name.strip()] = version.strip()
+                else:
+                    pkgs[line.strip()] = "installed"
+            
+            if pkgs:
+                _PY_EXEC_PIP_CACHE["generated_at"] = now
+                _PY_EXEC_PIP_CACHE["packages"] = pkgs
+                return pkgs
+    except Exception as e:
+        print(f"Warning: Could not read requirements file: {e}")
+    
+    # Fallback to empty dict
+    return {}
 
 
 def _get_py_exec_requirements_summary() -> str:
@@ -141,7 +127,7 @@ def _get_py_exec_requirements_summary() -> str:
                 if "#" in line:
                     line = line.split("#", 1)[0].strip()
                 req_lines.append(line)
-            parts.append("Unknown (docker pip list unavailable). Direct requirements include:")
+            parts.append("Direct requirements include:")
             parts.append(", ".join(req_lines) if req_lines else "(none)")
         else:
             parts.append("Unknown (requirements file not found).")
@@ -302,20 +288,6 @@ def _get_optional_library_recommendations_summary() -> str:
     parts.append("IMPORTANT: Only suggest these to the user as install options; do NOT import them in code unless the user confirms they are installed.")
     return "\n".join(parts)
 
-# For Docker-in-Docker: Get the host path for mounting volumes into py-exec container
-# When running in Docker, HOST_PROJECT_DIR should be set to the Windows host path
-# If not set, try to detect it from BASE_DIR (works if running locally)
-# On Windows Docker Desktop, volumes are mounted, so we need the actual Windows path
-HOST_PROJECT_DIR = os.getenv("HOST_PROJECT_DIR")
-if not HOST_PROJECT_DIR:
-    # If not set, use BASE_DIR (works for local development)
-    # For Docker-in-Docker, this will be /app, which won't work for Windows mounts
-    HOST_PROJECT_DIR = str(BASE_DIR)
-    print(f"⚠ HOST_PROJECT_DIR not set, using {HOST_PROJECT_DIR}")
-    print("  If running in Docker on Windows, set HOST_PROJECT_DIR to the Windows host path")
-else:
-    print(f"✓ Using HOST_PROJECT_DIR: {HOST_PROJECT_DIR}")
-HOST_OUTPUTS_DIR = pathlib.Path(HOST_PROJECT_DIR) / "outputs"
 LIBRARY_DIR = BASE_DIR / "library"
 LIBRARY_IMAGES_DIR = LIBRARY_DIR / "images"
 LIBRARY_METADATA_FILE = LIBRARY_DIR / "metadata.json"
@@ -345,6 +317,132 @@ except Exception as e:
 # Initialize logging system
 script_logger = ScriptLogger(LOGS_DIR)
 log_analyzer = LogAnalyzer(LOGS_DIR)
+
+def auto_seed_database():
+    """Automatically seed database with library scripts and images if empty"""
+    import os
+    from backend.database import get_db_session
+    from backend.models import LibraryScript, LibraryImage
+    
+    # Skip auto-seeding if SKIP_AUTO_SEED is set (when using pre-populated DB)
+    if os.getenv("SKIP_AUTO_SEED", "").lower() in ("true", "1", "yes"):
+        print("[Init] SKIP_AUTO_SEED is set, skipping database seeding")
+        return
+    
+    print("[Init] Checking if database needs seeding...")
+    
+    with get_db_session() as db:
+        # Check if library scripts exist
+        script_count = db.query(LibraryScript).count()
+        image_count = db.query(LibraryImage).count()
+        
+        # Seed library scripts if empty
+        if script_count == 0:
+            print("[Init] No library scripts found, seeding...")
+            try:
+                # Import the seed data directly
+                import importlib.util
+                seed_script_path = BASE_DIR / "seed_library_scripts.py"
+                
+                if seed_script_path.exists():
+                    # Read and execute the LIBRARY_SCRIPTS from seed file
+                    spec = importlib.util.spec_from_file_location("seed_library_scripts", seed_script_path)
+                    seed_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(seed_module)
+                    LIBRARY_SCRIPTS = seed_module.LIBRARY_SCRIPTS
+                    
+                    added_count = 0
+                    for script_data in LIBRARY_SCRIPTS:
+                        # Check if already exists (idempotent)
+                        existing = db.query(LibraryScript).filter(
+                            LibraryScript.name == script_data["name"]
+                        ).first()
+                        if existing:
+                            continue
+                            
+                        library_script = LibraryScript(
+                            name=script_data["name"],
+                            filename=f"{script_data['name'].lower().replace(' ', '_')}.py",
+                            description=script_data["description"],
+                            category=script_data["category"],
+                            tags=script_data["tags"],
+                            code=script_data["code"]
+                        )
+                        db.add(library_script)
+                        added_count += 1
+                    
+                    db.commit()
+                    print(f"[Init] ✓ Seeded {added_count} library scripts")
+                else:
+                    print(f"[Init] ⚠ Seed script not found at {seed_script_path}")
+            except Exception as e:
+                print(f"[Init] ⚠ Could not seed scripts: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"[Init] ✓ Found {script_count} existing library scripts")
+        
+        # Migrate library images if metadata.json exists
+        if image_count == 0 and LIBRARY_METADATA_FILE.exists():
+            print("[Init] No library images found, migrating from metadata.json...")
+            try:
+                import json
+                from PIL import Image
+                from datetime import datetime
+                
+                with open(LIBRARY_METADATA_FILE, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                
+                library_count = 0
+                for image_id, image_data in metadata.items():
+                    # Check if already exists
+                    existing = db.query(LibraryImage).filter(
+                        LibraryImage.id == image_id
+                    ).first()
+                    if existing:
+                        continue
+                    
+                    filename = image_data.get("filename", "")
+                    image_path = LIBRARY_IMAGES_DIR / filename
+                    
+                    # Get image dimensions if file exists
+                    width, height, file_size = None, None, None
+                    if image_path.exists():
+                        try:
+                            with Image.open(image_path) as img:
+                                width, height = img.size
+                            file_size = image_path.stat().st_size
+                        except:
+                            pass
+                    
+                    # Only migrate library images (no user_id)
+                    user_id = image_data.get("user_id")
+                    if not user_id:
+                        library_image = LibraryImage(
+                            id=image_id,
+                            name=image_data.get("name", filename),
+                            filename=filename,
+                            description=image_data.get("description", ""),
+                            image_type=image_data.get("type", "SEM"),
+                            category=image_data.get("category", "default"),
+                            width=width,
+                            height=height,
+                            file_size=file_size,
+                            created_at=datetime.utcnow()
+                        )
+                        db.add(library_image)
+                        library_count += 1
+                
+                db.commit()
+                print(f"[Init] ✓ Migrated {library_count} library images")
+            except Exception as e:
+                print(f"[Init] ⚠ Could not migrate images: {e}")
+                import traceback
+                traceback.print_exc()
+        elif image_count > 0:
+            print(f"[Init] ✓ Found {image_count} existing library images")
+        elif not LIBRARY_METADATA_FILE.exists():
+            print(f"[Init] ⚠ No metadata.json found at {LIBRARY_METADATA_FILE}, skipping image migration")
 
 # Initialize user_jobs.json - handle case where Docker might have created it as a directory
 if USER_JOBS_FILE.exists():
@@ -639,6 +737,18 @@ async def periodic_cleanup():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup: Initialize database and seed if needed
+    try:
+        from backend.database import init_database
+        # init_database() only creates tables if they don't exist - safe to call with existing DB
+        init_database()
+        # auto_seed_database() checks if data exists and respects SKIP_AUTO_SEED env var
+        auto_seed_database()
+    except Exception as e:
+        print(f"[Init] Warning: Database initialization/seeding failed: {e}")
+        import traceback
+        traceback.print_exc()
+    
     # Startup: Start periodic cleanup task
     cleanup_task = asyncio.create_task(periodic_cleanup())
     
@@ -926,115 +1036,36 @@ async def run_code(
         except Exception as e:
           return JSONResponse({"error": f"Failed to save image: {str(e)}"}, status_code=500)
 
-      # Execute script using either Kubernetes or Docker based on EXECUTION_RUNTIME
-      if EXECUTION_RUNTIME == "kubernetes" and k8s_runner:
-          print(f"Using Kubernetes runtime for script execution")
-          try:
-              # Prepare request JSON for Kubernetes runner
-              request_data = {
-                  "user_id": user_id,
-                  "session_id": session_id,
-                  "user_prompt": user_prompt
-              }
-              request_json = json.dumps(request_data)
-              
-              # Run script using Kubernetes
-              result = k8s_runner.run_script(
-                  job_id=job_id,
-                  script_content=code,
-                  request_json=request_json,
-                  input_path=str(in_dir),
-                  output_path=str(out_dir),
-                  timeout=60
-              )
-              
-              # Convert K8s result to proc-like object
-              class ProcResult:
-                  def __init__(self, returncode, stdout, stderr):
-                      self.returncode = returncode
-                      self.stdout = stdout
-                      self.stderr = stderr
-              
-              proc = ProcResult(
-                  returncode=0 if result["status"] == "success" else 1,
-                  stdout=result.get("logs", ""),
-                  stderr=result.get("error", "") if result["status"] == "error" else ""
-              )
-          except Exception as e:
-              print(f"Kubernetes execution failed: {e}")
-              traceback.print_exc()
-              proc = ProcResult(returncode=1, stdout="", stderr=str(e))
-      else:
-          # Build docker run command
-          # LIMITS: 1 CPU, 1 GiB RAM, no network, read-only, drop all caps
-          # Use HOST paths for Docker-in-Docker mounting
-          host_job_dir = HOST_OUTPUTS_DIR / job_id
-          host_code_dir = host_job_dir / "code"
-          host_in_dir = host_job_dir / "input"
-          host_out_dir = host_job_dir / "result"
+      # Execute script using Kubernetes
+      print(f"Using Kubernetes runtime for script execution")
+      try:
+          # Prepare request JSON for Kubernetes runner
+          request_data = {
+              "user_id": user_id,
+              "session_id": session_id,
+              "user_prompt": user_prompt
+          }
+          request_json = json.dumps(request_data)
           
-          # Verify the file was created successfully in the container
-          # Since docker-compose mounts ./outputs:/app/outputs, the file exists on both
-          # We need to use the Windows host path for Docker volume mounting
-          if not main_py_path.exists():
-              return JSONResponse({
-                  "error": f"Code file not found at {main_py_path}",
-                  "container_path": str(main_py_path)
-              }, status_code=500)
+          # Run script using Kubernetes
+          result = k8s_runner.run_script(
+              job_id=job_id,
+              script_content=code,
+              request_json=request_json,
+              input_path=str(in_dir),
+              output_path=str(out_dir),
+              timeout=60
+          )
           
-          # Convert Windows paths to Docker-compatible format
-          # Docker Desktop on Windows requires forward slashes for volume mounts
-          def to_docker_path(path):
-              """Convert Windows path to Docker-compatible format"""
-              path_str = str(path)
-              # Convert backslashes to forward slashes for Docker Desktop
-              # Docker Desktop on Windows handles Windows paths with forward slashes
-              if '\\' in path_str:
-                  path_str = path_str.replace('\\', '/')
-              return path_str
+          # Convert K8s result to proc-like object
+          class ProcResult:
+              def __init__(self, returncode, stdout, stderr):
+                  self.returncode = returncode
+                  self.stdout = stdout
+                  self.stderr = stderr
           
-          # Always use the Windows host path for Docker volume mounting
-          # The file exists on the host because docker-compose mounts ./outputs:/app/outputs
-          print(f"Using host paths for Docker mounting:")
-          print(f"  Code dir: {host_code_dir}")
-          print(f"  Input dir: {host_in_dir}")
-          print(f"  Output dir: {host_out_dir}")
-          
-          # Convert paths for Docker Desktop on Windows
-          docker_code_dir = to_docker_path(host_code_dir)
-          docker_in_dir = to_docker_path(host_in_dir)
-          docker_out_dir = to_docker_path(host_out_dir)
-          
-          # Verify the paths exist before mounting (for debugging)
-          # Note: We can't check Windows paths from inside the container, but the file exists
-          # because docker-compose mounts ./outputs:/app/outputs
-          print(f"✓ Code file created in container at: {main_py_path}")
-          
-          cmd = [
-              "docker", "run", "--rm",
-              "--network=none",
-              "--cpus=1",
-              "--memory=1g", "--pids-limit=256",
-              "--read-only",
-              "--tmpfs", "/tmp:rw,noexec,nosuid,size=100m",  # Allow tempfile.mkdtemp() to work
-              "--security-opt", "no-new-privileges",
-              "--cap-drop=ALL",
-              "-v", f"{docker_code_dir}:/code:ro",
-              "-v", f"{docker_in_dir}:/input:ro",
-              "-v", f"{docker_out_dir}:/output:rw",
-              "-e", f"USER_PARAMS={json.dumps({})}",
-              "py-exec:latest",
-          ]
-          
-          print(f"Running Docker command:")
-          print(f"  Host code dir: {host_code_dir} -> Docker: {docker_code_dir}")
-          print(f"  Host input dir: {host_in_dir} -> Docker: {docker_in_dir}")
-          print(f"  Host output dir: {host_out_dir} -> Docker: {docker_out_dir}")
-          print(f"  Full command: {' '.join(cmd)}")
-
-          try:
-              proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-          except subprocess.TimeoutExpired:
+          # Check for timeout status from Kubernetes runner
+          if result.get("status") == "timeout":
               # Log timeout failure
               log_id = script_logger.log_failure(
                   code=code,
@@ -1063,6 +1094,16 @@ async def run_code(
                   "log_id": log_id,
                   "session_id": session_id or log_id
               }, status_code=504)
+          
+          proc = ProcResult(
+              returncode=0 if result["status"] == "success" else 1,
+              stdout=result.get("logs", ""),
+              stderr=result.get("error", "") if result["status"] == "error" else ""
+          )
+      except Exception as e:
+          print(f"Kubernetes execution failed: {e}")
+          traceback.print_exc()
+          proc = ProcResult(returncode=1, stdout="", stderr=str(e))
 
       if proc.returncode != 0:
           # Provide detailed error information for debugging

@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maps-backend
+  namespace: maps-data-analysis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: maps-backend
+  template:
+    metadata:
+      labels:
+        app: maps-backend
+    spec:
+      serviceAccountName: maps-backend-sa
+      containers:
+      - name: backend
+        image: maps-python-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: TZ
+          value: "America/Los_Angeles"
+        - name: KUBERNETES_NAMESPACE
+          value: "maps-data-analysis"
+        - name: RUNNER_IMAGE
+          value: "py-exec:latest"
+        - name: SCRIPT_TIMEOUT
+          value: "600"
+        - name: SKIP_AUTO_SEED
+          value: "true"  # Using pre-populated database from image
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: maps-data-analysis-ai-api-keys
+              key: GOOGLE_API_KEY
+              optional: true
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: maps-data-analysis-ai-api-keys
+              key: OPENAI_API_KEY
+              optional: true
+        volumeMounts:
+        - name: outputs
+          mountPath: /app/outputs
+        # Library volume removed - using library images baked into image
+        - name: assets
+          mountPath: /app/assets
+        - name: logs
+          mountPath: /app/logs
+        - name: deploy
+          mountPath: /deploy
+        # Database volume removed - using database baked into image
+      volumes:
+      - name: outputs
+        persistentVolumeClaim:
+          claimName: maps-outputs
+      # Library volume removed - using library images baked into image
+      - name: assets
+        persistentVolumeClaim:
+          claimName: maps-assets
+      - name: logs
+        persistentVolumeClaim:
+          claimName: maps-logs
+      - name: deploy
+        persistentVolumeClaim:
+          claimName: maps-deploy
+      # Database volume removed - using database baked into image

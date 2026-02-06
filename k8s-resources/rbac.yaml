@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: maps-backend-sa
+  namespace: maps-data-analysis
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: maps-backend-role
+  namespace: maps-data-analysis
+rules:
+- apiGroups: [""]
+  resources: ["pods", "configmaps"]
+  verbs: ["create", "get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: maps-backend-rolebinding
+  namespace: maps-data-analysis
+subjects:
+- kind: ServiceAccount
+  name: maps-backend-sa
+  namespace: maps-data-analysis
+roleRef:
+  kind: Role
+  name: maps-backend-role
+  apiGroup: rbac.authorization.k8s.io

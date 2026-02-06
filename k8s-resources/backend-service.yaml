@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: maps-backend
+  namespace: maps-data-analysis
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: maps-backend

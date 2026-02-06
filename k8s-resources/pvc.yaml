@@ -57,3 +57,4 @@ spec:
   resources:
     requests:
       storage: 5Gi
+# Database PVC removed - using database baked into image

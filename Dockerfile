@@ -26,6 +26,14 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # Copy the entire project (will be overridden by volume mount, but needed for initial setup)
 COPY . /app
 
+# Copy pre-existing database file from backend folder
+# Note: Place your maps_helper.db file in the backend/ folder before building
+# This will fail if maps_helper.db doesn't exist - make sure to add it first
+COPY backend/maps_helper.db /app/maps_helper.db
+
+# Copy library images into the image (no PVC needed)
+COPY library/images/ /app/library/images/
+
 # Expose port
 EXPOSE 8080
 
