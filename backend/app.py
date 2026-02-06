@@ -1038,6 +1038,14 @@ async def run_code(
 
       # Execute script using Kubernetes
       print(f"Using Kubernetes runtime for script execution")
+      
+      # Define ProcResult class outside try block so it's available in except block
+      class ProcResult:
+          def __init__(self, returncode, stdout, stderr):
+              self.returncode = returncode
+              self.stdout = stdout
+              self.stderr = stderr
+      
       try:
           # Prepare request JSON for Kubernetes runner
           request_data = {
@@ -1056,13 +1064,6 @@ async def run_code(
               output_path=str(out_dir),
               timeout=60
           )
-          
-          # Convert K8s result to proc-like object
-          class ProcResult:
-              def __init__(self, returncode, stdout, stderr):
-                  self.returncode = returncode
-                  self.stdout = stdout
-                  self.stderr = stderr
           
           # Check for timeout status from Kubernetes runner
           if result.get("status") == "timeout":
