@@ -40,7 +40,7 @@ except Exception as e:
     raise RuntimeError("Kubernetes runner initialization failed. Cannot start backend.") from e
 
 # Version tracking
-API_VERSION = "1.17.0"  # Kubernetes-only runtime, auto-seeding of library scripts and images on startup
+API_VERSION = "1.18.0"  # Library images baked into image, removed library PVC mount
 
 # Configure Gemini AI
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
