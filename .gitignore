@@ -16,6 +16,8 @@ ENV/
 
 # Database
 *.db
+# Exception: Allow the pre-populated database file to be committed
+!backend/maps_helper.db
 *.sqlite3
 
 # IDE
