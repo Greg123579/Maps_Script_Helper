@@ -41,12 +41,7 @@ environments:
             type: persistentVolumeClaim
             properties:
               claimName: maps-outputs         
-        - name: library
-          mountPath: /app/library
-          volume:
-            type: persistentVolumeClaim
-            properties:
-              claimName: maps-library          
+        # Library volume removed - using library images baked into image
         - name: assets
           mountPath: /app/assets
           volume:
@@ -77,8 +72,14 @@ environments:
       value: "1"
     - name: TZ
       value: "America/Los_Angeles"
-    - name: HOST_PROJECT_DIR
-      value: "/app"
+    - name: KUBERNETES_NAMESPACE
+      value: "maps-data-analysis"
+    - name: RUNNER_IMAGE
+      value: "py-exec:latest"
+    - name: SCRIPT_TIMEOUT
+      value: "600"
+    - name: SKIP_AUTO_SEED
+      value: "true"  # Using pre-populated database from image
     - name: GOOGLE_API_KEY
       key: GOOGLE_API_KEY
       secretname: maps-data-analysis-ai-api-keys
