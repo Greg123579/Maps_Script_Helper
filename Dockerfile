@@ -26,10 +26,10 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # Copy the entire project (will be overridden by volume mount, but needed for initial setup)
 COPY . /app
 
-# Copy pre-existing database file from backend folder
-# Note: Place your maps_helper.db file in the backend/ folder before building
-# This will fail if maps_helper.db doesn't exist - make sure to add it first
-COPY backend/maps_helper.db /app/maps_helper.db
+# Move database file to root if it exists (optional - for AWS/production)
+# If the file doesn't exist, a fresh database will be created on startup
+# For local development: delete backend/maps_helper.db before building to start fresh
+RUN if [ -f /app/backend/maps_helper.db ]; then mv /app/backend/maps_helper.db /app/maps_helper.db; fi || true
 
 # Copy library images into the image (no PVC needed)
 COPY library/images/ /app/library/images/

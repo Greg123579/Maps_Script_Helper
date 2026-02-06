@@ -2,17 +2,27 @@ import os, uuid, shutil, json, pathlib, subprocess, traceback, io, time
 from datetime import datetime
 from typing import Optional, List
 import threading
+
+_start_time = time.time()
+def _log_import(module_name: str):
+    elapsed = time.time() - _start_time
+    print(f"[Startup] {elapsed:.2f}s - Importing {module_name}...")
+
+_log_import("FastAPI")
 from fastapi import FastAPI, UploadFile, File, Form, Response, HTTPException, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 import re
+_log_import("PIL")
 from PIL import Image
 from contextlib import asynccontextmanager
 import asyncio
 from pydantic import BaseModel
+_log_import("google.generativeai")
 import google.generativeai as genai
+_log_import("SQLAlchemy")
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
@@ -30,6 +40,7 @@ except ImportError:
     from models import User, UserScript, LibraryImage, UserImage, LibraryScript, ExecutionSession
 
 # Always use Kubernetes runtime
+_log_import("Kubernetes client")
 try:
     from backend.k8s_runner import get_runner
     k8s_runner = get_runner()
@@ -39,15 +50,19 @@ except Exception as e:
     traceback.print_exc()
     raise RuntimeError("Kubernetes runner initialization failed. Cannot start backend.") from e
 
+_import_time = time.time() - _start_time
+print(f"[Startup] {_import_time:.2f}s - All imports complete")
+
 # Version tracking
-API_VERSION = "1.18.1"  # Fixed ProcResult scope issue in script execution
+API_VERSION = "1.20.1"  # Fixed batch file syntax, added startup timing logs, improved deployment script
 
 # Configure Gemini AI
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
-    print(f"Key: {GOOGLE_API_KEY}")
-    print("✓ Gemini AI configured successfully")
+    # Show masked key for confirmation (first 3 and last 3 characters)
+    masked_key = f"{GOOGLE_API_KEY[:3]}...{GOOGLE_API_KEY[-3:]}" if len(GOOGLE_API_KEY) > 6 else "***"
+    print(f"✓ Gemini AI configured successfully (Key: {masked_key})")
 else:
     print("⚠ Warning: GOOGLE_API_KEY not set. AI Assistant will not work.")
 
@@ -738,12 +753,18 @@ async def periodic_cleanup():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize database and seed if needed
+    startup_start = time.time()
     try:
         from backend.database import init_database
         # init_database() only creates tables if they don't exist - safe to call with existing DB
+        db_start = time.time()
         init_database()
+        print(f"[Startup] {time.time() - db_start:.2f}s - Database initialized")
         # auto_seed_database() checks if data exists and respects SKIP_AUTO_SEED env var
+        seed_start = time.time()
         auto_seed_database()
+        print(f"[Startup] {time.time() - seed_start:.2f}s - Database seeding complete")
+        print(f"[Startup] {time.time() - startup_start:.2f}s - Total startup time")
     except Exception as e:
         print(f"[Init] Warning: Database initialization/seeding failed: {e}")
         import traceback
@@ -1292,7 +1313,6 @@ class ChatRequest(BaseModel):
     context: Optional[str] = None  # Optional context about current code/image
     image_url: Optional[str] = None  # Optional URL to the selected image
     model: Optional[str] = None  # Optional Gemini model override
-    api_key: Optional[str] = None  # Optional user-provided Gemini API key
 
 # AI Chat endpoint
 @app.post("/api/chat")
@@ -1300,19 +1320,18 @@ async def chat_with_ai(request: ChatRequest):
     """
     Chat with Gemini AI for image processing assistance.
     Provides context-aware help with scikit-image, numpy, and matplotlib.
-    Requires user to provide their own Gemini API key.
+    Uses server-configured API key from GOOGLE_API_KEY environment variable.
     """
-    # Require user-provided API key - no server default fallback
-    if not request.api_key:
-        print(f"request: {request}")
+    # Check if API key is configured on server
+    if not GOOGLE_API_KEY:
         return JSONResponse(
-            {"error": "AI Assistant requires an API key. Please set your Gemini API key in the Settings tab."},
-            status_code=403
+            {"error": "AI Assistant is not configured. GOOGLE_API_KEY environment variable is not set."},
+            status_code=503
         )
     
     try:
-        # Configure genai with the user's API key
-        genai.configure(api_key=request.api_key)
+        # Use server's API key (already configured at startup via genai.configure)
+        # No need to reconfigure - genai is already configured with GOOGLE_API_KEY
         
         # Check if user is approving debug injection or asking to analyze debug output
         last_user_message = request.messages[-1] if request.messages else None

@@ -1378,8 +1378,6 @@ if __name__ == "__main__":
   const [currentScript, setCurrentScript] = useState(null); // Track currently loaded script for updates
   const [toast, setToast] = useState(null); // Toast notification state
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false); // Track left panel collapsed state
-  const [apiKey, setApiKey] = useState(''); // Gemini API key
-  const [showApiKey, setShowApiKey] = useState(false); // Toggle API key visibility
   const [theme, setTheme] = useState('light'); // Theme: 'light' or 'dark'
 
   const isDark = theme === 'dark';
@@ -2264,13 +2262,8 @@ if __name__ == "__main__":
   const textareaRef = useRef(null);
 
   // Initialize user_id from localStorage or generate new one
-  // Load API key from localStorage
+  // Load theme from localStorage
   useEffect(() => {
-    const storedApiKey = localStorage.getItem('geminiApiKey');
-    if (storedApiKey) {
-      setApiKey(storedApiKey);
-    }
-    
     // Load theme from localStorage
     const storedTheme = localStorage.getItem('theme');
     if (storedTheme) {
@@ -2278,13 +2271,6 @@ if __name__ == "__main__":
       document.body.className = storedTheme === 'dark' ? 'dark-theme' : '';
     }
   }, []);
-  
-  // Save API key to localStorage when it changes
-  useEffect(() => {
-    if (apiKey) {
-      localStorage.setItem('geminiApiKey', apiKey);
-    }
-  }, [apiKey]);
   
   // Save theme to localStorage and apply to body when it changes
   useEffect(() => {
@@ -3444,8 +3430,7 @@ if __name__ == "__main__":
               })),
               context: contextParts.length > 0 ? contextParts.join('\n') : null,
               image_url: imageUrl,
-              model: aiModel,
-              api_key: apiKey || null
+              model: aiModel
             })
           });
           
@@ -6574,7 +6559,7 @@ MapsBridge.StoreFile(
                         </div>
                         <div className="help-card-body">
                           <ol>
-                            <li>Make sure your Gemini API key is configured in <strong>Settings</strong></li>
+                            <li>AI Assistant uses server-configured API keys</li>
                             <li>Open the <strong>AI Assistant</strong> panel</li>
                             <li>Describe what you want: "Create a script that detects edges using Canny and outputs to a new channel called 'Edges'"</li>
                             <li>Review the generated code</li>
@@ -6844,8 +6829,7 @@ path = MapsBridge.GetPreparedImagePath(request, "0")`}</code></pre>
                                       })),
                                       context: contextParts.length > 0 ? contextParts.join('\n') : null,
                                       image_url: imageUrl,
-                                      model: aiModel,
-                                      api_key: apiKey || null
+                                      model: aiModel
                                     })
                                   });
                                   

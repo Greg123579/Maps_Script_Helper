@@ -32,7 +32,7 @@ spec:
         - name: SCRIPT_TIMEOUT
           value: "600"
         - name: SKIP_AUTO_SEED
-          value: "true"  # Using pre-populated database from image
+          value: "false"  # Auto-seed library scripts and images on fresh database
         - name: GOOGLE_API_KEY
           valueFrom:
             secretKeyRef:
@@ -62,12 +62,9 @@ spec:
           claimName: maps-outputs
       # Library volume removed - using library images baked into image
       - name: assets
-        persistentVolumeClaim:
-          claimName: maps-assets
+        emptyDir: {}
       - name: logs
-        persistentVolumeClaim:
-          claimName: maps-logs
+        emptyDir: {}
       - name: deploy
-        persistentVolumeClaim:
-          claimName: maps-deploy
+        emptyDir: {}
       # Database volume removed - using database baked into image
