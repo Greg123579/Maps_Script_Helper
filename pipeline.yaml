@@ -4,6 +4,7 @@ containerBuild:
 deployment: 
   name: maps-ai-script-helper
   namespace: maps-data-analysis
+  strategy: Recreate
   cpu: 250m
   limitCpu: 1000m
   memory: 512Mi 
