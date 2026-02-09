@@ -309,8 +309,13 @@ LIBRARY_METADATA_FILE = LIBRARY_DIR / "metadata.json"
 USER_JOBS_FILE = BASE_DIR / "user_jobs.json"  # Track user_id -> job_ids mapping
 USERS_FILE = BASE_DIR / "users.json"  # Track user accounts
 
+# User uploads directory - stored on PVC (maps-assets) for persistence across deploys
+# Library images stay baked into the Docker image at /app/library/images/
+USER_UPLOADS_DIR = ASSETS_DIR / "uploads"
+
 # Ensure library directories exist
 LIBRARY_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+USER_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 if not LIBRARY_METADATA_FILE.exists():
@@ -1968,8 +1973,10 @@ Your goal: Generate scripts that work on the first try using these proven patter
                 # Handle library path: library/images/filename -> library/images/filename
                 if image_path_str.startswith('outputs/'):
                     image_path = OUTPUTS_DIR / image_path_str.replace('outputs/', '')
+                elif image_path_str.startswith('uploads/images/'):
+                    image_path = USER_UPLOADS_DIR / image_path_str.replace('uploads/images/', '')
                 elif image_path_str.startswith('library/images/'):
-                    image_path = BASE_DIR / "library" / "images" / image_path_str.replace('library/images/', '')
+                    image_path = LIBRARY_IMAGES_DIR / image_path_str.replace('library/images/', '')
                 else:
                     # Try relative to BASE_DIR
                     image_path = BASE_DIR / image_path_str
@@ -2295,10 +2302,10 @@ async def upload_library_image(
     # Generate unique ID
     image_id = str(uuid.uuid4())
     
-    # Save image file
+    # Save image file to user uploads directory (PVC-backed, persistent)
     file_extension = pathlib.Path(image.filename).suffix.lower() or ".png"
     image_filename = f"{image_id}{file_extension}"
-    image_path = LIBRARY_IMAGES_DIR / image_filename
+    image_path = USER_UPLOADS_DIR / image_filename
     
     content = await image.read()
     with open(image_path, "wb") as f:
@@ -2335,7 +2342,7 @@ async def upload_library_image(
         "name": name,
         "description": description,
         "type": image_type,
-        "url": f"/library/images/{image_filename}",
+        "url": f"/uploads/images/{image_filename}",
         "width": width,
         "height": height,
         "file_size": file_size
@@ -2366,69 +2373,53 @@ def list_library_images(user_id: Optional[str] = None, db: Session = Depends(get
     images.sort(key=lambda x: x["name"].lower())
     return {"images": images}
 
-@app.get("/library/images/{filename:path}")
-def get_library_image(filename: str, raw: bool = False):
-    """Get a specific library image file by filename
+def _serve_image_file(image_path: pathlib.Path, filename: str, raw: bool = False):
+    """Shared helper to serve an image file, with TIFF-to-PNG conversion for browsers.
     
     Args:
-        filename: The image filename
+        image_path: Full filesystem path to the image file
+        filename: The filename (used for Content-Disposition and extension detection)
         raw: If True, serve raw TIFF files without conversion (for script execution)
     """
-    image_path = LIBRARY_IMAGES_DIR / filename
-    if not image_path.exists():
-        return JSONResponse({"error": "Image file not found"}, status_code=404)
-    
     # Check if it's a TIFF file and raw=False - convert to PNG for browser display
     file_ext = pathlib.Path(filename).suffix.lower()
     if file_ext in ['.tiff', '.tif'] and not raw:
         try:
-            # Open TIFF and convert to PNG for browser display only
             import numpy as np
             
             img = Image.open(image_path)
             img_array = np.array(img)
             
-            # Normalize different bit depths to 8-bit (0-255)
             needs_normalization = False
-            
-            # Check for 16-bit, 32-bit, or float images
             if img_array.dtype in [np.uint16, np.uint32, np.int16, np.int32]:
                 needs_normalization = True
             elif img_array.dtype in [np.float32, np.float64]:
                 needs_normalization = True
             elif img_array.dtype == np.uint8:
-                # Check if it's a low-range image (like labeled data)
                 max_val = img_array.max()
                 if max_val < 100 and max_val > 1:
                     needs_normalization = True
             
             if needs_normalization and img_array.size > 0:
-                # Normalize to 0-255 range
                 min_val = img_array.min()
                 max_val = img_array.max()
-                
                 print(f"Normalizing TIFF: dtype={img_array.dtype}, min={min_val}, max={max_val}")
-                
                 if max_val > min_val:
-                    # Scale to 0-255
                     normalized = ((img_array - min_val) / (max_val - min_val) * 255).astype(np.uint8)
                     img = Image.fromarray(normalized)
                 else:
-                    # All same value - create blank image
                     img = Image.fromarray(np.zeros_like(img_array, dtype=np.uint8))
             
-            # Convert to appropriate mode for PNG
             if img.mode not in ('RGB', 'RGBA', 'L'):
                 if img.mode in ('LA',):
                     img = img.convert('RGBA')
                 elif img.mode in ('P', 'I', 'F'):
                     img = img.convert('RGB')
                 elif len(img.getbands()) == 1:
-                    img = img.convert('L')  # Keep as grayscale
+                    img = img.convert('L')
                 else:
                     img = img.convert('RGB')
             
-            # Save to bytes buffer as PNG
             img_buffer = io.BytesIO()
             img.save(img_buffer, format='PNG', optimize=True)
             img_buffer.seek(0)
@@ -2445,11 +2436,40 @@ def get_library_image(filename: str, raw: bool = False):
             print(f"⚠ Failed to convert TIFF for display: {e}")
             import traceback
             traceback.print_exc()
-            # Fall back to serving raw file
             return FileResponse(image_path)
     
     # For other formats or raw=True, serve directly
     return FileResponse(image_path)
+
+@app.get("/uploads/images/{filename:path}")
+def get_uploaded_image(filename: str, raw: bool = False):
+    """Get a user-uploaded image file by filename (from PVC-backed storage)
+    
+    Args:
+        filename: The image filename
+        raw: If True, serve raw TIFF files without conversion (for script execution)
+    """
+    image_path = USER_UPLOADS_DIR / filename
+    if not image_path.exists():
+        return JSONResponse({"error": "Uploaded image file not found"}, status_code=404)
+    return _serve_image_file(image_path, filename, raw)
+
+@app.get("/library/images/{filename:path}")
+def get_library_image(filename: str, raw: bool = False):
+    """Get a specific library image file by filename
+    
+    Args:
+        filename: The image filename
+        raw: If True, serve raw TIFF files without conversion (for script execution)
+    """
+    image_path = LIBRARY_IMAGES_DIR / filename
+    # Also check user uploads directory for backward compatibility
+    if not image_path.exists():
+        image_path = USER_UPLOADS_DIR / filename
+    if not image_path.exists():
+        return JSONResponse({"error": "Image file not found"}, status_code=404)
+    
+    return _serve_image_file(image_path, filename, raw)
 
 @app.delete("/library/images/{image_id}")
 def delete_library_image(
@@ -2469,8 +2489,10 @@ def delete_library_image(
                 status_code=403
             )
         
-        # Delete image file
-        image_path = LIBRARY_IMAGES_DIR / user_image.filename
+        # Delete image file (check user uploads first, then library dir for backward compat)
+        image_path = USER_UPLOADS_DIR / user_image.filename
+        if not image_path.exists():
+            image_path = LIBRARY_IMAGES_DIR / user_image.filename
         if image_path.exists():
             image_path.unlink()
         
@@ -3382,7 +3404,10 @@ def reset_user_data(db: Session = Depends(get_db)):
         user_images = db.query(UserImage).all()
         deleted_counts["images"] = len(user_images)
         for image in user_images:
-            image_path = LIBRARY_IMAGES_DIR / image.filename
+            # Check user uploads first, then library dir for backward compat
+            image_path = USER_UPLOADS_DIR / image.filename
+            if not image_path.exists():
+                image_path = LIBRARY_IMAGES_DIR / image.filename
             if image_path.exists():
                 image_path.unlink()
                 print(f"[RESET] Deleted user image file: {image.filename}")

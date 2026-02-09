@@ -136,7 +136,7 @@ class UserImage(Base):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(255), nullable=False, index=True)
-    filename = Column(String(255), nullable=False)  # Points to library/images/{filename}
+    filename = Column(String(255), nullable=False)  # Points to assets/uploads/{filename}
     description = Column(Text, default="")
     image_type = Column(String(50), index=True)  # SEM, SDB, TEM, OPTICAL
     width = Column(Integer)
@@ -155,7 +155,7 @@ class UserImage(Base):
             "filename": self.filename,
             "description": self.description or "",
             "type": self.image_type,
-            "url": f"/library/images/{self.filename}",
+            "url": f"/uploads/images/{self.filename}",
             "width": self.width,
             "height": self.height,
             "file_size": self.file_size,

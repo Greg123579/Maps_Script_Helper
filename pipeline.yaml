@@ -82,7 +82,7 @@ environments:
     - name: DATABASE_PATH
       value: "/deploy/maps_helper.db"
     - name: SKIP_AUTO_SEED
-      value: "false"  # Auto-seed database with library scripts on startup
+      value: "true"  # Using pre-populated database bundled in image (copied to PVC on first deploy)
     - name: GOOGLE_API_KEY
       key: GOOGLE_API_KEY
       secretname: maps-data-analysis-ai-api-keys
