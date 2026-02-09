@@ -84,7 +84,7 @@ class KubernetesRunner:
             ),
             spec=client.V1PodSpec(
                 restart_policy="Never",
-                service_account_name="maps-backend-sa",
+                service_account_name="tfstack-maps-data-analysis",
                 containers=[
                     client.V1Container(
                         name="runner",
