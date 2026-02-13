@@ -1,0 +1,58 @@
+# Production Docker Compose for EC2 (Amazon Linux)
+# Deployed to /opt/maps-helper/ by the deploy-ec2.sh script
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Prerequisites (handled by deploy-ec2.sh):
+#   1. Docker and Docker Compose installed on EC2
+#   2. py-exec:latest sandbox image built
+#   3. .env file created with API keys
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maps-script-helper
+    ports:
+      - "8080:8080"
+    volumes:
+      # Bind-mount persistent data directories (predictable host paths required
+      # for Docker-in-Docker volume mounts in the script execution sandbox)
+      - ./data/outputs:/app/outputs
+      - ./data/library:/app/library
+      - ./data/assets:/app/assets
+      - ./data/logs:/app/logs
+      - ./data/scripts:/app/scripts
+      - ./data/db:/app/data
+      # Mount Docker socket so the backend can spawn py-exec sandbox containers
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PYTHONUNBUFFERED=1
+      - EXECUTION_RUNTIME=docker
+      - RUNNER_IMAGE=py-exec:latest
+      - SCRIPT_TIMEOUT=600
+      - TZ=America/Los_Angeles
+      # Host path prefix for Docker-in-Docker volume mounts.
+      # The Docker runner translates container paths like /app/outputs/job-xxx/...
+      # to host paths like /opt/maps-helper/data/outputs/job-xxx/...
+      # so that spawned py-exec containers mount the correct host directories.
+      - HOST_PROJECT_DIR=/opt/maps-helper/data
+      # Database location (inside the persistent data volume)
+      - DATABASE_PATH=/app/data/maps_helper.db
+      # API keys (loaded from .env file or set inline)
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"

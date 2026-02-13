@@ -39,16 +39,37 @@ except ImportError:
     from database import get_db, init_database
     from models import User, UserScript, LibraryImage, UserImage, LibraryScript, ExecutionSession
 
-# Always use Kubernetes runtime
-_log_import("Kubernetes client")
+# Initialize script execution runtime (auto-detects Docker or Kubernetes)
+_log_import("Script execution runtime")
 try:
-    from backend.k8s_runner import get_runner
-    k8s_runner = get_runner()
-    print("✓ Using Kubernetes runtime for script execution")
-except Exception as e:
-    print(f"✗ ERROR: Failed to initialize Kubernetes runner: {e}")
-    traceback.print_exc()
-    raise RuntimeError("Kubernetes runner initialization failed. Cannot start backend.") from e
+    from backend.runtime_config import detect_runtime
+except ImportError:
+    from runtime_config import detect_runtime
+
+_execution_runtime = detect_runtime()
+script_runner = None
+
+if _execution_runtime == "kubernetes":
+    _log_import("Kubernetes client")
+    try:
+        from backend.k8s_runner import get_runner as get_k8s_runner
+        script_runner = get_k8s_runner()
+        print("✓ Using Kubernetes runtime for script execution")
+    except Exception as e:
+        print(f"⚠ WARNING: Failed to initialize Kubernetes runner: {e}")
+        traceback.print_exc()
+        print("  Falling back to Docker runtime...")
+        _execution_runtime = "docker"
+
+if _execution_runtime == "docker":
+    try:
+        from backend.docker_runner import get_runner as get_docker_runner
+        script_runner = get_docker_runner()
+        print("✓ Using Docker runtime for script execution")
+    except Exception as e:
+        print(f"✗ ERROR: Failed to initialize any script runner: {e}")
+        traceback.print_exc()
+        raise RuntimeError("No script execution runtime available. Cannot start backend.") from e
 
 _import_time = time.time() - _start_time
 print(f"[Startup] {_import_time:.2f}s - All imports complete")
@@ -1062,8 +1083,8 @@ async def run_code(
         except Exception as e:
           return JSONResponse({"error": f"Failed to save image: {str(e)}"}, status_code=500)
 
-      # Execute script using Kubernetes
-      print(f"Using Kubernetes runtime for script execution")
+      # Execute script using detected runtime
+      print(f"Using {_execution_runtime} runtime for script execution")
       
       # Define ProcResult class outside try block so it's available in except block
       class ProcResult:
@@ -1073,7 +1094,7 @@ async def run_code(
               self.stderr = stderr
       
       try:
-          # Prepare request JSON for Kubernetes runner
+          # Prepare request JSON
           request_data = {
               "user_id": user_id,
               "session_id": session_id,
@@ -1081,17 +1102,32 @@ async def run_code(
           }
           request_json = json.dumps(request_data)
           
-          # Run script using Kubernetes
-          result = k8s_runner.run_script(
-              job_id=job_id,
-              script_content=code,
-              request_json=request_json,
-              input_path=str(in_dir),
-              output_path=str(out_dir),
-              timeout=60
-          )
+          # Write request.json to code_dir (needed for Docker runner, harmless for K8s)
+          request_json_path = code_dir / "request.json"
+          request_json_path.write_text(request_json, encoding="utf-8")
           
-          # Check for timeout status from Kubernetes runner
+          # Run script using the detected runtime
+          if _execution_runtime == "kubernetes":
+              result = script_runner.run_script(
+                  job_id=job_id,
+                  script_content=code,
+                  request_json=request_json,
+                  input_path=str(in_dir),
+                  output_path=str(out_dir),
+                  timeout=60
+              )
+          else:
+              # Docker runner uses file paths
+              result = script_runner.run_script(
+                  job_id=job_id,
+                  script_path=str(main_py_path),
+                  request_path=str(request_json_path),
+                  input_path=str(in_dir),
+                  output_path=str(out_dir),
+                  timeout=60
+              )
+          
+          # Check for timeout status
           if result.get("status") == "timeout":
               # Log timeout failure
               log_id = script_logger.log_failure(
@@ -1128,7 +1164,7 @@ async def run_code(
               stderr=result.get("error", "") if result["status"] == "error" else ""
           )
       except Exception as e:
-          print(f"Kubernetes execution failed: {e}")
+          print(f"Script execution failed ({_execution_runtime}): {e}")
           traceback.print_exc()
           proc = ProcResult(returncode=1, stdout="", stderr=str(e))
 

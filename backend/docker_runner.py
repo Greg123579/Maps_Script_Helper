@@ -80,11 +80,12 @@ class DockerRunner:
             output_host = output_path
         
         # Build Docker command
+        # Note: job_runner.py expects the script at /code/main.py (not /code/script.py)
         docker_cmd = [
             "docker", "run",
             "--rm",
             "--name", f"runner-{job_id}",
-            "-v", f"{script_host}:/code/script.py:ro",
+            "-v", f"{script_host}:/code/main.py:ro",
             "-v", f"{request_host}:/code/request.json:ro",
             "-v", f"{input_host}:/input:ro",
             "-v", f"{output_host}:/output",
