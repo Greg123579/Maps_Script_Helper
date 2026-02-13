@@ -14,9 +14,11 @@ print("=" * 60)
 # but we need to ensure the directory exists and is writable.
 
 # Use current working directory (which is set to /outputs/{job-id} in K8s)
-# or fall back to /output for Docker compatibility
+# or fall back to /output and /input for Docker compatibility
 working_directory = pathlib.Path(os.getcwd())
-output_dir = working_directory / "result" if (working_directory / "result").exists() or working_directory.name != "output" else pathlib.Path("/output")
+# For K8s: use ./input and ./result when they exist. For Docker: /input and /output are mounted.
+output_dir = (working_directory / "result") if (working_directory / "result").exists() else pathlib.Path("/output")
+input_dir = (working_directory / "input") if (working_directory / "input").exists() else pathlib.Path("/input")
 matplotlib_dir = output_dir / ".matplotlib"
 
 print(f"[DEBUG] Checking output directory: {output_dir}...")
@@ -41,8 +43,7 @@ try:
 except Exception as e:
     print(f"[DEBUG]   Error listing {output_dir}: {e}")
 
-# List contents of input dir
-input_dir = working_directory / "input" if (working_directory / "input").exists() or working_directory.name != "output" else pathlib.Path("/input")
+# List contents of input dir (input_dir already set above)
 # Set environment variable for MapsBridge to use
 os.environ['INPUT_DIR'] = str(input_dir)
 os.environ['OUTPUT_DIR'] = str(output_dir)

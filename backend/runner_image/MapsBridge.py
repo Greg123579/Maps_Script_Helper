@@ -156,21 +156,22 @@ class ScriptTileSetRequest:
         input_dir = Path(input_dir_str)
         _debug(f"Input directory: {input_dir}, exists: {input_dir.exists()}")
         
-        # Find all image files in /input
+        # Find all image files in /input (skip if directory does not exist)
         image_extensions = ["*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff", "*.bmp", "*.gif"]
         image_files = []
-        for ext in image_extensions:
-            found = list(input_dir.glob(ext))
-            found_upper = list(input_dir.glob(ext.upper()))
-            image_files.extend(found)
-            image_files.extend(found_upper)
-        
-        # If no standard image files found, include ALL files
-        if not image_files:
-            _debug("  No standard image extensions found, checking all files...")
-            all_files = [f for f in input_dir.iterdir() if f.is_file()]
-            excluded = {'.gitkeep', '.ds_store', 'thumbs.db', '.matplotlib'}
-            image_files = [f for f in all_files if f.name.lower() not in excluded and not f.name.startswith('.')]
+        if input_dir.exists():
+            for ext in image_extensions:
+                found = list(input_dir.glob(ext))
+                found_upper = list(input_dir.glob(ext.upper()))
+                image_files.extend(found)
+                image_files.extend(found_upper)
+            
+            # If no standard image files found, include ALL files
+            if not image_files:
+                _debug("  No standard image extensions found, checking all files...")
+                all_files = [f for f in input_dir.iterdir() if f.is_file()]
+                excluded = {'.gitkeep', '.ds_store', 'thumbs.db', '.matplotlib'}
+                image_files = [f for f in all_files if f.name.lower() not in excluded and not f.name.startswith('.')]
         
         image_files = sorted(set(image_files))
         _debug(f"Total image files found: {len(image_files)}")
@@ -293,21 +294,22 @@ class ScriptImageLayerRequest:
         input_dir = Path(input_dir_str)
         _debug(f"Input directory: {input_dir}, exists: {input_dir.exists()}")
         
-        # Find all image files in /input
+        # Find all image files in /input (skip if directory does not exist)
         image_extensions = ["*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff", "*.bmp", "*.gif"]
         image_files = []
-        for ext in image_extensions:
-            found = list(input_dir.glob(ext))
-            found_upper = list(input_dir.glob(ext.upper()))
-            image_files.extend(found)
-            image_files.extend(found_upper)
-        
-        # If no standard image files found, include ALL files
-        if not image_files:
-            _debug("  No standard image extensions found, checking all files...")
-            all_files = [f for f in input_dir.iterdir() if f.is_file()]
-            excluded = {'.gitkeep', '.ds_store', 'thumbs.db', '.matplotlib'}
-            image_files = [f for f in all_files if f.name.lower() not in excluded and not f.name.startswith('.')]
+        if input_dir.exists():
+            for ext in image_extensions:
+                found = list(input_dir.glob(ext))
+                found_upper = list(input_dir.glob(ext.upper()))
+                image_files.extend(found)
+                image_files.extend(found_upper)
+            
+            # If no standard image files found, include ALL files
+            if not image_files:
+                _debug("  No standard image extensions found, checking all files...")
+                all_files = [f for f in input_dir.iterdir() if f.is_file()]
+                excluded = {'.gitkeep', '.ds_store', 'thumbs.db', '.matplotlib'}
+                image_files = [f for f in all_files if f.name.lower() not in excluded and not f.name.startswith('.')]
         
         image_files = sorted(set(image_files))
         _debug(f"Total image files found: {len(image_files)}")
