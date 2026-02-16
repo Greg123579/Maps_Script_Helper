@@ -1,8 +1,9 @@
-"""Create test data directly in database"""
+"""Create test data directly in database. Run from project root."""
 import sys
 import pathlib
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent / "backend"))
+_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_ROOT / "backend"))
 
 from backend.database import get_db_session
 from backend.models import User

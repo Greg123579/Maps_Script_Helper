@@ -112,8 +112,9 @@ python analyze_logs.py export
 
 ### Learn More
 
-- 📖 **Quick Start:** See `LOGGING_QUICKSTART.md` for examples
-- 📚 **Full Documentation:** See `LOGGING_SYSTEM.md` for API details
+- 📖 **Quick Start:** See `docs/LOGGING_QUICKSTART.md` for examples
+- 📚 **Full Documentation:** See `docs/LOGGING_SYSTEM.md` for API details
+- 📁 **All docs:** Database, OpenAI, Kubernetes, etc. are in the `docs/` folder
 
 ### Benefits
 
@@ -121,6 +122,15 @@ python analyze_logs.py export
 - 🎯 **Pattern Detection** - Automatically identifies common mistakes
 - 🔄 **Self-Improving AI** - Learns from failures to generate better code
 - 🔍 **Debugging Help** - Easily review what went wrong and how it was fixed
+
+## Project structure
+
+- **Root:** `README.md`, `CONTEXT.md` (deployment/EC2), `seed_library_scripts.py` (DB seeding, used by app), `analyze_logs.py` (log analysis CLI).
+- **backend/** — FastAPI app, DB, runners (Docker/K8s), logging.
+- **backend/runner_image/** — Sandbox image (MapsBridge, job_runner).
+- **frontend/** — React UI.
+- **docs/** — All other documentation (logging, DB, OpenAI, Kubernetes, etc.).
+- **scripts/archive/** — One-off and dev scripts (migrations, test data, examples); run from project root if needed.
 
 ## Notes & next steps
 

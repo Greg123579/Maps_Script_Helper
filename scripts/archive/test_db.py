@@ -1,4 +1,9 @@
-"""Quick database verification script"""
+"""Quick database verification script. Run from project root."""
+import sys
+import pathlib
+_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_ROOT))
+
 from backend.database import get_db_session
 from backend.models import User, UserScript, LibraryImage
 

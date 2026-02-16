@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: maps-python-backend
     ports:
-      - "8000:8000"
+      - "8000:8080"
     volumes:
       # Mount project directory for auto-reload
       - .:/app
@@ -18,10 +18,14 @@ services:
       # Mount user_jobs.json (ensure it exists as a file before mounting)
       - ./user_jobs.json:/app/user_jobs.json
       # Mount deploy directory (where scripts will be deployed)
-      # This maps to C:\project\Python on the host
-      - C:\project\Python:/deploy
+      - ./deploy:/deploy
+      # Mount Docker socket so backend can spawn py-exec script containers
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - PYTHONUNBUFFERED=1
+      - EXECUTION_RUNTIME=docker
+      # Host path for Docker-in-Docker volume mounts (required for script execution)
+      - HOST_PROJECT_DIR=${PWD}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - KUBERNETES_NAMESPACE=maps-data-analysis

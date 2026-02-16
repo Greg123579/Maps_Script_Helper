@@ -22,6 +22,8 @@ import asyncio
 from pydantic import BaseModel
 _log_import("google.generativeai")
 import google.generativeai as genai
+_log_import("openai")
+from openai import OpenAI
 _log_import("SQLAlchemy")
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -77,15 +79,30 @@ print(f"[Startup] {_import_time:.2f}s - All imports complete")
 # Version tracking
 API_VERSION = "1.20.1"  # Fixed batch file syntax, added startup timing logs, improved deployment script
 
-# Configure Gemini AI
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+# Configure Gemini AI (env vars override hardcoded secrets in backend/secrets.py)
+_secrets_path = pathlib.Path(__file__).resolve().parent / "secrets.py"
+_SECRET_GOOGLE, _SECRET_OPENAI = "", ""
+if _secrets_path.exists():
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location("_api_secrets", _secrets_path)
+    if _spec and _spec.loader:
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _SECRET_GOOGLE = getattr(_mod, "GOOGLE_API_KEY", "") or ""
+        _SECRET_OPENAI = getattr(_mod, "OPENAI_API_KEY", "") or ""
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or _SECRET_GOOGLE or ""
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or _SECRET_OPENAI or ""
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
-    # Show masked key for confirmation (first 3 and last 3 characters)
     masked_key = f"{GOOGLE_API_KEY[:3]}...{GOOGLE_API_KEY[-3:]}" if len(GOOGLE_API_KEY) > 6 else "***"
-    print(f"✓ Gemini AI configured successfully (Key: {masked_key})")
+    print(f"✓ Gemini AI configured (Key: {masked_key})")
 else:
-    print("⚠ Warning: GOOGLE_API_KEY not set. AI Assistant will not work.")
+    print("⚠ GOOGLE_API_KEY not set. Gemini models will not work.")
+if OPENAI_API_KEY:
+    masked = f"{OPENAI_API_KEY[:7]}...{OPENAI_API_KEY[-4:]}" if len(OPENAI_API_KEY) > 11 else "***"
+    print(f"✓ OpenAI configured (Key: {masked})")
+else:
+    print("⚠ OPENAI_API_KEY not set. GPT models will not work.")
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
@@ -705,20 +722,18 @@ def inject_debug_logging(code: str) -> str:
             var = line.split('=')[0].strip()
             result.append(f'{indent_str}print(f"[AUTO-DEBUG] cv2.imread: {var}, shape={{{var}.shape if {var} is not None else \'None\'}}, dtype={{{var}.dtype if {var} is not None else \'None\'}}")')
         
-        # After MapsBridge.FromStdIn calls
-        elif 'MapsBridge.' in line and 'FromStdIn' in line and '=' in line:
+        # After MapsBridge from_stdin calls (v1.1.0 snake_case or legacy PascalCase)
+        elif 'MapsBridge.' in line and ('from_stdin' in line or 'FromStdIn' in line) and '=' in line:
             var = line.split('=')[0].strip()
             result.append(f'{indent_str}print(f"[AUTO-DEBUG] MapsBridge request loaded: {var}, type={{type({var})}}")')
         
-        # After MapsBridge path resolution
-        elif 'ResolveSingleTileAndPath' in line and '=' in line:
-            # Extract variable names (usually: tile, tileInfo, input_path = ...)
-            if ',' in line.split('=')[0]:
-                vars_part = line.split('=')[0].strip()
-                result.append(f'{indent_str}print(f"[AUTO-DEBUG] Tile resolved: tile={{tile.Column if hasattr(tile, \'Column\') else \'?\'}}x{{tile.Row if hasattr(tile, \'Row\') else \'?\'}}, path={{input_path if \'input_path\' in locals() else \'?\'}}")')
+        # After MapsBridge get_tile_info calls
+        elif 'get_tile_info' in line and '=' in line:
+            var = line.split('=')[0].strip()
+            result.append(f'{indent_str}print(f"[AUTO-DEBUG] Tile info resolved: {var}={{{var}}}")')
         
-        # After GetPreparedImagePath calls
-        elif 'GetPreparedImagePath' in line and '=' in line:
+        # After prepared_images access
+        elif 'prepared_images' in line and '=' in line:
             var = line.split('=')[0].strip()
             result.append(f'{indent_str}print(f"[AUTO-DEBUG] Prepared image path: {var}={{os.path.basename({var}) if os.path.exists({var}) else \'NOT FOUND\'}}")')
         
@@ -1359,16 +1374,25 @@ class ChatRequest(BaseModel):
 @app.post("/api/chat")
 async def chat_with_ai(request: ChatRequest):
     """
-    Chat with Gemini AI for image processing assistance.
-    Provides context-aware help with scikit-image, numpy, and matplotlib.
-    Uses server-configured API key from GOOGLE_API_KEY environment variable.
+    Chat with AI for image processing assistance.
+    Supports Google Gemini and OpenAI models. Uses server-configured API keys.
     """
-    # Check if API key is configured on server
-    if not GOOGLE_API_KEY:
-        return JSONResponse(
-            {"error": "AI Assistant is not configured. GOOGLE_API_KEY environment variable is not set."},
-            status_code=503
-        )
+    # Determine requested model early for API key check
+    requested_model = (request.model or "gemini-2.5-flash-lite").strip()
+    use_openai = requested_model.startswith("gpt-")
+    # Check appropriate API key
+    if use_openai:
+        if not OPENAI_API_KEY:
+            return JSONResponse(
+                {"error": "OpenAI is not configured. OPENAI_API_KEY is not set. Add it to backend/secrets.py or .env."},
+                status_code=503
+            )
+    else:
+        if not GOOGLE_API_KEY:
+            return JSONResponse(
+                {"error": "Gemini is not configured. GOOGLE_API_KEY is not set. Add it to backend/secrets.py or .env."},
+                status_code=503
+            )
     
     try:
         # Use server's API key (already configured at startup via genai.configure)
@@ -1409,14 +1433,16 @@ async def chat_with_ai(request: ChatRequest):
         # Build system context for MAPS Script Bridge
         system_context = """You are an expert Python assistant for MAPS Script Bridge (MapsBridge) scripts.
 
-🚨🚨🚨 CRITICAL: ALL SCRIPTS MUST USE MAPBRIDGE API 🚨🚨🚨
+🚨🚨🚨 CRITICAL: ALL SCRIPTS MUST USE MAPBRIDGE v1.1.0 API 🚨🚨🚨
 
 EVERY script will be run in MAPS eventually. Scripts must use MapsBridge API to:
-✅ Read input data (via FromStdIn())
+✅ Read input data (via from_stdin())
 ✅ Process images
-✅ Output results (via MapsBridge methods)
+✅ Output results (via MapsBridge functions)
 
 This ensures scripts work in BOTH the Helper App (for testing) AND real MAPS (for production).
+
+🚨 API VERSION: v1.1.0 — ALL names use snake_case (NOT PascalCase).
 
 ═══════════════════════════════════════════════════════════════
           🔴 CODE UPDATE vs EXPLANATION QUESTIONS 🔴
@@ -1428,21 +1454,13 @@ CRITICAL: Distinguish between two types of user requests:
    - "Create a script that..."
    - "Update/modify/change the code to..."
    - "Fix this error..."
-   - "Add feature X to the script..."
-   - "Write a function that..."
    → For these: Provide code in ```python code blocks
 
 2️⃣ EXPLANATION/UNDERSTANDING QUESTIONS (NO code blocks):
    - "Where in the script is X happening?"
    - "Explain how Y works..."
-   - "What does function Z do?"
-   - "How is X being calculated?"
-   - "Show me where the file is saved"
-   → For these: Answer in plain text, reference line numbers, explain concepts
-   → DO NOT include code blocks - just explain the existing code
-
-Rule: If the user is asking about UNDERSTANDING existing code, answer with text only.
-If they want to MODIFY/CREATE code, then provide code blocks.
+   → For these: Answer in plain text, reference line numbers
+   → DO NOT include code blocks - just explain
 
 ═══════════════════════════════════════════════════════════════
               AVAILABLE PYTHON LIBRARIES (EXECUTION SANDBOX)
@@ -1464,25 +1482,89 @@ ASK THE USER:
 "Will this run on a Tile Set or Image Layer/Stitched Image?"
 
 FOR TILE SETS (most common - 60%):
-  → Use MapsBridge.ScriptTileSetRequest.FromStdIn()
+  → Use MapsBridge.ScriptTileSetRequest.from_stdin()
   → User says: "tile set", "tiles", "individual tiles", "grid"
 
 FOR IMAGE LAYERS/STITCHED IMAGES (20%):
-  → Use MapsBridge.ScriptImageLayerRequest.FromStdIn()
+  → Use MapsBridge.ScriptImageLayerRequest.from_stdin()
   → User says: "image layer", "stitched image", "single image", "full image"
 
 ═══════════════════════════════════════════════════════════════
-        RECOMMENDED: USE MAPSBRIDGE HELPER FUNCTIONS
+              MAPBRIDGE v1.1.0 DATA CLASSES
 ═══════════════════════════════════════════════════════════════
 
-MapsBridge includes convenience helpers to reduce boilerplate and prevent common mistakes:
+ALL property names use snake_case. All data classes use DOT NOTATION to access fields.
 
-- Resolve a single tile + its path: MapsBridge.ResolveSingleTileAndPath(request, channelIndex="0")
-- Iterate tiles to process + paths: MapsBridge.IterTilesToProcessWithPath(request, channelIndex="0")
-- Resolve prepared image path: MapsBridge.GetPreparedImagePath(request, channelIndex="0")
-- Temp output folder: MapsBridge.GetTempOutputFolder(subfolder="MapsScriptOutputs")
-- Parse parameters: MapsBridge.ParseScriptParameters(request.ScriptParameters)
-- Common output pattern: MapsBridge.GetDefaultOutputTileSetAndChannel(...)
+Geometry types:
+  PointFloat:      .x, .y
+  PointInt:        .x, .y
+  SizeFloat:       .width, .height
+  SizeInt:         .width, .height
+
+Tile types:
+  Tile:            .column, .row
+  TileInfo:        .column, .row, .stage_position (PointFloat), .tile_center_pixel_offset (PointFloat), .image_file_names (dict)
+  ChannelInfo:     .index, .name, .color
+
+TileSetInfo:       .guid, .name, .data_folder_path, .column_count, .row_count, .channel_count,
+                   .is_completed, .size (SizeFloat), .tile_size (SizeFloat), .tile_resolution (SizeInt), .pixel_format,
+                   .stage_position (PointFloat), .rotation, .pixel_to_stage_matrix,
+                   .horizontal_overlap, .vertical_overlap, .channels (list[ChannelInfo]), .tiles (list[TileInfo])
+
+ImageLayerInfo:    .guid, .name, .stage_position (PointFloat), .rotation, .data_folder_path,
+                   .size (SizeFloat), .total_layer_resolution (SizeInt), .pixel_to_stage_matrix, .original_tile_set
+
+AnnotationInfo:    .guid, .name, .stage_position (PointFloat), .rotation, .size (SizeFloat)
+LayerInfo:         .layer_exists, .guid, .name, .layer_type, .layer_info
+Confirmation:      .is_success, .warning_message, .error_message
+
+Request classes:
+  ScriptRequest:            .request_type, .request_guid, .script_name, .script_parameters
+  ScriptTileSetRequest:     (inherits above) + .source_tile_set (TileSetInfo), .tiles_to_process (list[Tile])
+  ScriptImageLayerRequest:  (inherits above) + .source_image_layer (ImageLayerInfo), .prepared_images (dict)
+
+Result classes:
+  TileSetCreateInfo:      .is_success, .error_message, .is_created, .tile_set (TileSetInfo)
+  ImageLayerCreateInfo:   .is_success, .error_message, .image_layer (ImageLayerInfo)
+  AnnotationCreateInfo:   .is_success, .error_message, .annotation (AnnotationInfo)
+
+═══════════════════════════════════════════════════════════════
+         PROPERTY ACCESS CHEAT SHEET (copy-paste these)
+═══════════════════════════════════════════════════════════════
+
+```python
+# --- Tile set metadata (source_tile_set is TileSetInfo) ---
+tile_width  = source_tile_set.tile_resolution.width   # SizeInt  → .width, .height
+tile_height = source_tile_set.tile_resolution.height
+total_w     = source_tile_set.size.width               # SizeFloat → .width, .height
+total_h     = source_tile_set.size.height
+num_cols    = source_tile_set.column_count
+num_rows    = source_tile_set.row_count
+folder      = source_tile_set.data_folder_path
+ts_name     = source_tile_set.name
+ts_guid     = source_tile_set.guid
+
+# --- Tile info (tile_info is TileInfo) ---
+col         = tile_info.column
+row         = tile_info.row
+pos_x       = tile_info.stage_position.x               # PointFloat → .x, .y
+pos_y       = tile_info.stage_position.y
+filename    = tile_info.image_file_names["0"]           # dict — keys are STRINGS
+
+# --- Image layer metadata (source_layer is ImageLayerInfo) ---
+layer_w     = source_layer.total_layer_resolution.width  # SizeInt  → .width, .height
+layer_h     = source_layer.total_layer_resolution.height
+layer_name  = source_layer.name
+layer_guid  = source_layer.guid
+
+# --- Coordinate transforms return PointFloat / PointInt ---
+stage_pt    = MapsBridge.tile_pixel_to_stage(px, py, col, row, source_tile_set)
+stage_x     = stage_pt.x                                # PointFloat → .x, .y
+stage_y     = stage_pt.y
+pixel_pt    = MapsBridge.calculate_total_pixel_position(px, py, col, row, source_tile_set)
+total_px    = pixel_pt.x                                 # PointInt → .x, .y
+total_py    = pixel_pt.y
+```
 
 ═══════════════════════════════════════════════════════════════
          PATTERN 1: TILE SET PROCESSING (Most Common)
@@ -1490,50 +1572,59 @@ MapsBridge includes convenience helpers to reduce boilerplate and prevent common
 
 ```python
 import os
+import tempfile
 import MapsBridge
-from PIL import Image
 import cv2
+import numpy as np
 
 def main():
-    # 1. Read tile set request
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    
-    # 2. Get tile + TileInfo + input path (single-tile mode)
-    # 🚨 CRITICAL: Channel index keys are strings: "0", "1", ...
-    tile, tileInfo, input_path = MapsBridge.ResolveSingleTileAndPath(request, "0")
-    
-    MapsBridge.LogInfo(f"Processing tile [{tile.Column}, {tile.Row}]")
-    
-    # 4. Process image
+    # 1. Read tile set request from stdin
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+
+    # 2. Get tile to process (single-tile mode: one tile in tiles_to_process)
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
+
+    # 3. Access tile set metadata (all use dot notation)
+    tile_w = source_tile_set.tile_resolution.width    # SizeInt  → .width, .height
+    tile_h = source_tile_set.tile_resolution.height
+    pos_x  = tile_info.stage_position.x               # PointFloat → .x, .y
+    pos_y  = tile_info.stage_position.y
+
+    # 4. Get input image path (channel keys are STRINGS: "0", "1", ...)
+    tile_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, tile_filename)
+
+    MapsBridge.log_info(f"Processing tile [{tile_info.column}, {tile_info.row}] size={tile_w}x{tile_h}")
+
+    # 5. Process image
     img = cv2.imread(input_path)
     result = cv2.GaussianBlur(img, (5, 5), 0)
-    
-    # 5. Save to temp folder
-    output_folder = MapsBridge.GetTempOutputFolder("output")
+
+    # 6. Save to temp folder
+    output_folder = os.path.join(tempfile.gettempdir(), "output")
+    os.makedirs(output_folder, exist_ok=True)
     output_path = os.path.join(output_folder, "result.tif")
     cv2.imwrite(output_path, result)
-    
-    # 6. Create/get output tile set and ensure channel exists
-    outputInfo = MapsBridge.GetDefaultOutputTileSetAndChannel(
-        sourceTileSet=sourceTileSet,
-        channelName="Processed",
-        channelColor=(255, 0, 0),
-        isAdditive=True,
-        targetLayerGroupName="Outputs",
+
+    # 7. Create/get output tile set
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Results for " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    
-    # 7. Send output
-    MapsBridge.SendSingleTileOutput(
-        tileRow=tileInfo.Row,
-        tileColumn=tileInfo.Column,
-        targetChannelName="Processed",
-        imageFilePath=output_path,
-        keepFile=True,
-        targetTileSetGuid=outputInfo.TileSet.Guid,
+    output_tile_set = output_info.tile_set
+
+    # 8. Create channel (before sending tile output)
+    MapsBridge.create_channel("Processed", (255, 0, 0), True, output_tile_set.guid)
+
+    # 9. Send output
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column, "Processed",
+        output_path, True, output_tile_set.guid
     )
-    
-    MapsBridge.LogInfo("Processing complete!")
+
+    MapsBridge.log_info("Processing complete!")
 
 if __name__ == "__main__":
     main()
@@ -1545,45 +1636,51 @@ if __name__ == "__main__":
 
 ```python
 import os
+import tempfile
 import MapsBridge
 import cv2
 
 def main():
-    # 1. Read image layer request
-    request = MapsBridge.ScriptImageLayerRequest.FromStdIn()
-    sourceLayer = request.SourceImageLayer
-    
-    # 2. Get input image
-    # 🚨 CRITICAL: Use STRING key "0" not integer 0
-    input_path = MapsBridge.GetPreparedImagePath(request, "0")
-    
-    MapsBridge.LogInfo(f"Processing layer: {sourceLayer.Name}")
-    
-    # 3. Process image
+    # 1. Read image layer request from stdin
+    request = MapsBridge.ScriptImageLayerRequest.from_stdin()
+    source_layer = request.source_image_layer
+
+    # 2. Access image layer metadata (all use dot notation)
+    layer_w = source_layer.total_layer_resolution.width   # SizeInt  → .width, .height
+    layer_h = source_layer.total_layer_resolution.height
+    pos_x   = source_layer.stage_position.x               # PointFloat → .x, .y
+    pos_y   = source_layer.stage_position.y
+
+    # 3. Get prepared image path (channel keys are STRINGS)
+    input_path = request.prepared_images["0"]
+
+    MapsBridge.log_info(f"Processing layer: {source_layer.name} ({layer_w}x{layer_h})")
+
+    # 4. Process image
     img = cv2.imread(input_path)
     result = cv2.GaussianBlur(img, (5, 5), 0)
-    
-    # 4. Save to temp folder
-    output_folder = MapsBridge.GetTempOutputFolder("output")
+
+    # 5. Save to temp folder
+    output_folder = os.path.join(tempfile.gettempdir(), "output")
+    os.makedirs(output_folder, exist_ok=True)
     output_path = os.path.join(output_folder, "result.png")
     cv2.imwrite(output_path, result)
-    
-    # 5. Create output image layer
-    MapsBridge.CreateImageLayer(
-        "Processed " + sourceLayer.Name,
+
+    # 6. Create output image layer (inherits position/size from source if not specified)
+    MapsBridge.create_image_layer(
+        "Processed " + source_layer.name,
         output_path,
-        targetLayerGroupName="Outputs",
-        keepFile=True
+        target_layer_group_name="Outputs",
+        keep_file=True
     )
-    
-    MapsBridge.LogInfo("Processing complete!")
+
+    MapsBridge.log_info("Processing complete!")
 
 if __name__ == "__main__":
     main()
 ```
 
 ═══════════════════════════════════════════════════════════════
-
         PATTERN 3: BATCH PROCESSING (Process All Tiles)
 ═══════════════════════════════════════════════════════════════
 
@@ -1592,108 +1689,144 @@ import os
 import MapsBridge
 
 def main():
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    MapsBridge.LogInfo(f"Processing {len(request.TilesToProcess)} tiles")
-    
-    # Iterate through tiles requested by MAPS (or helper app)
-    for tile, tileInfo, input_path in MapsBridge.IterTilesToProcessWithPath(request, "0"):
-        MapsBridge.LogInfo(f"Processing tile [{tile.Column}, {tile.Row}] from {os.path.basename(input_path)}")
-        # ... process each tile and send outputs via MapsBridge ...
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+
+    MapsBridge.log_info(f"Processing {len(request.tiles_to_process)} tiles")
+
+    for tile_to_process in request.tiles_to_process:
+        tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
+        tile_filename = tile_info.image_file_names["0"]
+        input_path = os.path.join(source_tile_set.data_folder_path, tile_filename)
+        MapsBridge.log_info(f"Processing tile [{tile_info.column}, {tile_info.row}] from {os.path.basename(input_path)}")
+        # ... process each tile ...
 
 if __name__ == "__main__":
     main()
 ```
 
 ═══════════════════════════════════════════════════════════════
-          PATTERN 4: ANNOTATIONS (Sites & Areas of Interest)
+       PATTERN 4: ANNOTATIONS (Sites & Areas of Interest)
 ═══════════════════════════════════════════════════════════════
 
 ```python
-# Site of Interest (point marker - no size)
-MapsBridge.CreateAnnotation(
+# Site of Interest (SOI - point marker, no size)
+MapsBridge.create_annotation(
     "Feature_001",
-    stagePosition=(0.001, 0.002, 0),
-    targetLayerGroupName="Annotations"
+    (0.001, 0.002, 0),
+    target_layer_group_name="Annotations"
 )
 
-# Area of Interest (rectangular region - with size)
-MapsBridge.CreateAnnotation(
+# Area of Interest (AOI - rectangular/elliptical region, with size)
+MapsBridge.create_annotation(
     "ROI_001",
-    stagePosition=(0.001, 0.002, 0),
+    (0.001, 0.002, 0),
     rotation=30,
     size=("10um", "5um"),
     notes="Important region",
     color=(0, 255, 0),
-    isEllipse=False,
-    targetLayerGroupName="Annotations"
+    is_ellipse=False,
+    target_layer_group_name="Annotations"
 )
 
-# Create annotation from detected feature in tile (pixel to stage coords)
-detectedPixelX = 200
-detectedPixelY = 300
-stageCoords = MapsBridge.TilePixelToStage(
-    detectedPixelX, detectedPixelY,
-    tile.Column, tile.Row, sourceTileSet
+# Create annotation from detected feature in tile image (pixel to stage coords)
+detected_pixel_x = 200
+detected_pixel_y = 300
+stage_coords = MapsBridge.tile_pixel_to_stage(
+    detected_pixel_x, detected_pixel_y,
+    tile_info.column, tile_info.row, source_tile_set
 )
-MapsBridge.CreateAnnotation(
-    f"Detected_{tile.Column}_{tile.Row}",
-    stagePosition=(stageCoords.X, stageCoords.Y, 0),
-    targetLayerGroupName="Detected Features"
+MapsBridge.create_annotation(
+    f"Detected_{tile_info.column}_{tile_info.row}",
+    (stage_coords.x, stage_coords.y, 0),
+    target_layer_group_name="Detected Features"
 )
 ```
 
 ═══════════════════════════════════════════════════════════════
-         PATTERN 5: CREATE TILE SET (New Acquisition - 20%)
+       PATTERN 5: CREATE TILE SET (New Acquisition)
 ═══════════════════════════════════════════════════════════════
 
 ```python
 # Create new tile set for acquisition at detected location
-MapsBridge.CreateTileSet(
+MapsBridge.create_tile_set(
     "New Acquisition",
-    stagePosition=(tile.StagePosition.X, tile.StagePosition.Y, sourceTileSet.Rotation),
-    totalSize=("30um", "20um"),
-    tileHfw="5um",
-    pixelSize="4nm",
-    scheduleAcquisition=True,
-    targetLayerGroupName="New Acquisitions"
+    (stage_coords.x, stage_coords.y, 0),
+    ("30um", "20um"),
+    tile_hfw="5um",
+    pixel_size="4nm",
+    schedule_acquisition=True,
+    target_layer_group_name="New Acquisitions"
 )
 ```
+
+═══════════════════════════════════════════════════════════════
+              COMPLETE FUNCTION REFERENCE (v1.1.0)
+═══════════════════════════════════════════════════════════════
+
+Reading requests:
+  MapsBridge.ScriptTileSetRequest.from_stdin() → ScriptTileSetRequest
+  MapsBridge.ScriptImageLayerRequest.from_stdin() → ScriptImageLayerRequest
+  MapsBridge.read_request_from_stdin() → ScriptTileSetRequest | ScriptImageLayerRequest | ScriptRequest
+
+Tile set output:
+  MapsBridge.get_or_create_output_tile_set(tile_set_name, tile_resolution, target_layer_group_name, request_confirmation) → TileSetCreateInfo
+  MapsBridge.create_tile_set(tile_set_name, stage_position, total_size, rotation, template_name, tile_resolution, tile_hfw, pixel_size, schedule_acquisition, target_layer_group_name, request_confirmation) → TileSetCreateInfo
+  MapsBridge.create_channel(channel_name, channel_color, is_additive, target_tile_set_guid, request_confirmation) → Confirmation
+  MapsBridge.send_single_tile_output(tile_row, tile_column, target_channel_name, image_file_path, keep_file, target_tile_set_guid, request_confirmation) → Confirmation
+
+Image layer output:
+  MapsBridge.create_image_layer(layer_name, image_file_path, stage_position, pixel_position, total_size, total_width, pixel_size, rotation, target_layer_group_name, keep_file, align_to_source_layer, request_confirmation) → ImageLayerCreateInfo
+
+Annotations:
+  MapsBridge.create_annotation(annotation_name, stage_position, rotation, size, notes, color, is_ellipse, target_layer_group_name, request_confirmation) → AnnotationCreateInfo
+
+Layer info:
+  MapsBridge.get_layer_info(layer_name, request_full_info) → LayerInfo
+
+Files & notes:
+  MapsBridge.store_file(file_path, overwrite, keep_file, target_layer_guid, request_confirmation) → Confirmation
+  MapsBridge.append_notes(notes_to_append, target_layer_guid, request_confirmation) → Confirmation
+
+Coordinate transforms:
+  MapsBridge.get_tile_info(tile_column, tile_row, tile_set) → TileInfo
+  MapsBridge.tile_pixel_to_stage(pixel_x, pixel_y, tile_column, tile_row, tile_set) → PointFloat
+  MapsBridge.image_pixel_to_stage(pixel_x, pixel_y, image_layer) → PointFloat
+  MapsBridge.calculate_total_pixel_position(pixel_x, pixel_y, tile_column, tile_row, tile_set) → PointInt
+
+Logging & reporting:
+  MapsBridge.log_info(info_message)
+  MapsBridge.log_warning(warning_message)
+  MapsBridge.log_error(error_message)
+  MapsBridge.report_failure(error_message)   — terminates script
+  MapsBridge.report_progress(progress_percentage)   — 0.0 to 100.0
+  MapsBridge.report_activity_description(activity_description)
+
+Async variants (fire-and-forget, no confirmation):
+  MapsBridge.get_or_create_output_tile_set_async(...)
+  MapsBridge.create_tile_set_async(...)
+  MapsBridge.create_channel_async(...)
+  MapsBridge.send_single_tile_output_async(...)
+  MapsBridge.create_image_layer_async(...)
+  MapsBridge.create_annotation_async(...)
+  MapsBridge.store_file_async(...)
+  MapsBridge.append_notes_async(...)
 
 ═══════════════════════════════════════════════════════════════
                     🚨 CRITICAL RULES 🚨
 ═══════════════════════════════════════════════════════════════
 
-✅ ALWAYS use STRING channel indices: "0", "1", "2" NOT integers 0, 1, 2
-✅ ALWAYS use MapsBridge.FromStdIn() to read request
-✅ Prefer MapsBridge.GetTempOutputFolder(...) for temporary outputs
-✅ ALWAYS use MapsBridge output methods (CreateImageLayer, SendSingleTileOutput)
+✅ ALL names are snake_case (v1.1.0): from_stdin(), source_tile_set, tile_info.column, log_info()
+✅ ALL data class fields use DOT NOTATION: tile_resolution.width, stage_position.x, size.height (see cheat sheet above)
+✅ ALWAYS use STRING channel keys: image_file_names["0"], prepared_images["0"]
+✅ ALWAYS use from_stdin() to read the initial request
+✅ ALWAYS save outputs to tempfile.gettempdir() subfolder
+✅ ALWAYS use MapsBridge output methods (create_image_layer, send_single_tile_output)
 ✅ ALWAYS use try/except for error handling around file I/O
-✅ ALWAYS call MapsBridge.LogInfo/LogWarning/LogError for debugging
+✅ ALWAYS call log_info/log_warning/log_error for debugging
 ✅ ALWAYS create channels BEFORE sending tile output to them
-✅ ALWAYS use keepFile=True to preserve temporary files
-
-❌ NEVER use cv2.imread('/input/...')
-❌ NEVER use cv2.imwrite('/output/...')
-❌ NEVER use integer channel indices: ImageFileNames[0] ← WRONG!
-❌ NEVER forget to create output tile set before creating channels
-❌ NEVER hardcode image filenames - always use provided paths
-
-═══════════════════════════════════════════════════════════════
-                    AVAILABLE LIBRARIES
-═══════════════════════════════════════════════════════════════
-
-✅ MapsBridge - MAPS integration (REQUIRED)
-✅ cv2 (OpenCV) - Image processing
-✅ PIL/Pillow - Image I/O
-✅ numpy - Arrays and math
-✅ scipy - Scientific computing
-✅ scikit-image (skimage) - Image processing
-✅ matplotlib - Colormaps and visualization
-✅ pandas - Data handling
-✅ imageio - Image reading/writing
-
-❌ mahotas - NOT installed
-❌ tensorflow, torch, keras - NOT installed
+✅ ALWAYS use keep_file=True to preserve temporary files
+✅ ALWAYS get image paths from the request: tile_info.image_file_names["0"], request.prepared_images["0"]
 
 ═══════════════════════════════════════════════════════════════
                     POSITIONING & UNITS
@@ -1702,16 +1835,17 @@ MapsBridge.CreateTileSet(
 Stage positions: tuples (x, y, rotation)
   - x, y: float in meters OR string with units
   - rotation: float in degrees OR string with units
-  
-Sizes: tuples (width, height)
-  - width, height: float in meters OR string with units
 
-Units strings: "30um", "5um", "4nm", "1mm", "30 deg"
+Sizes: tuples (width, height)
+  - float in meters OR string with units
+
+Supported length units: m, mm, um (or μm), nm
+Supported angle units: deg (or °), rad
 
 Examples:
-  stagePosition=(0.001, 0.002, 0)           # meters, meters, degrees
-  stagePosition=("1mm", "2mm", "30 deg")    # string units
-  size=("10um", "5um")                      # micrometers
+  (0.001, 0.002, 0)           # meters, meters, degrees
+  ("1mm", "2mm", "30 deg")    # string with units
+  ("10um", "5um")             # micrometers
 
 ═══════════════════════════════════════════════════════════════
                  CODE FORMATTING & INDENTATION
@@ -1721,81 +1855,68 @@ Examples:
 - ALWAYS use 4 spaces for indentation (NO TABS)
 - NEVER mix indentation levels
 - EVERY line must be properly indented
-- Double-check ALL code blocks before sending
-
-Common error: "IndentationError: unindent does not match any outer indentation level"
-FIX: Ensure all code at same level uses exactly the same indentation
 
 ═══════════════════════════════════════════════════════════════
                UNDERSTANDING MAPS DATA TYPES
 ═══════════════════════════════════════════════════════════════
 
-MAPS has TWO data types for script processing:
-
-1. TILE SET (Collection of tiles) - 60% of use cases:
+1. TILE SET (Collection of tiles) - most common:
    - Multiple image tiles in a grid (e.g., 5x5 = 25 tiles)
    - Each tile: row/column indices (1-based)
-   - Large area imaging (microscope acquires many tiles)
-   - Process tile-by-tile OR all tiles together
-   - Example: 10mm × 10mm sample = 100 individual 1mm tiles
-   - API: ScriptTileSetRequest
+   - Process tile-by-tile (single tiles mode) OR all at once (batch mode)
+   - API: ScriptTileSetRequest → request.source_tile_set, request.tiles_to_process
 
-2. IMAGE LAYER / STITCHED IMAGE - 20% of use cases:
-   - SINGLE large image (stitched from tiles)
-   - No tile indices - one complete image
-   - Process the full assembled result
-   - Example: 100 tiles stitched → one 10mm × 10mm image
-   - API: ScriptImageLayerRequest
-   - User terminology: "image layer" OR "stitched image"
+2. IMAGE LAYER / STITCHED IMAGE:
+   - Single large image (stitched from tiles)
+   - No tile indices — one complete image
+   - API: ScriptImageLayerRequest → request.source_image_layer, request.prepared_images
 
-🚨 IMPORTANT: Ask Clarifying Questions!
 If unclear, ASK: "Will this run on a Tile Set or Image Layer/Stitched Image?"
-
-- "tile set", "tiles", "grid" → TileSetRequest
-- "image layer", "stitched", "single image" → ImageLayerRequest
 
 ═══════════════════════════════════════════════════════════════
                     HELPER APP vs REAL MAPS
 ═══════════════════════════════════════════════════════════════
 
-The Helper App SIMULATES the MAPS environment for testing:
-
 IN HELPER APP (testing):
 ✅ Images in /input/ directory
-✅ MapsBridge.FromStdIn() scans /input folder (simulated)
-✅ MapsBridge functions are SIMULATED (stubs, logging)
-✅ Outputs copied to /output/ for preview
-✅ Annotations logged (not visually created)
+✅ from_stdin() scans /input folder (simulated)
+✅ Output functions copy to /output/ for preview
+✅ Annotations/tile sets logged (not visually created)
 
 IN REAL MAPS (production):
-✅ Images from tile set data folder
-✅ MapsBridge.FromStdIn() reads JSON from stdin (real data)
-✅ MapsBridge functions create real MAPS objects
-✅ Outputs create actual channels, layers, annotations
-✅ Annotations appear in MAPS project
+✅ from_stdin() reads JSON from stdin (real MAPS data)
+✅ Functions send JSON to MAPS via stdout (real operations)
+✅ Outputs create actual channels, layers, annotations in project
 
-SAME SCRIPT works in BOTH! Test in Helper → Deploy to MAPS
+SAME SCRIPT works in BOTH! Test in Helper → Deploy to MAPS.
 
 ═══════════════════════════════════════════════════════════════
-                 OTHER MAPBRIDGE FUNCTIONS
+              OTHER USEFUL FUNCTIONS
 ═══════════════════════════════════════════════════════════════
 
-Store Files:
+Store files to a layer:
 ```python
-MapsBridge.StoreFile(
-    "C:\\analysis\\report.pdf",
+MapsBridge.store_file(
+    "C:\\\\analysis\\\\report.pdf",
     overwrite=True,
-    keepFile=True,
-    targetLayerGuid=outputTileSet.Guid
+    keep_file=True,
+    target_layer_guid=output_tile_set.guid
 )
 ```
 
-Append Notes:
+Append notes to a layer:
 ```python
-MapsBridge.AppendNotes(
-    f"Processed tile [{tile.Column}, {tile.Row}]\\n",
-    targetLayerGuid=outputTileSet.Guid
+MapsBridge.append_notes(
+    f"Processed tile [{tile_info.column}, {tile_info.row}]\\n",
+    target_layer_guid=output_tile_set.guid
 )
+```
+
+Query layer info:
+```python
+layer_info = MapsBridge.get_layer_info("MyLayerName", request_full_info=True)
+if layer_info.layer_exists:
+    MapsBridge.log_info(f"Found layer: {layer_info.name}, type: {layer_info.layer_type}")
 ```
 
 ═══════════════════════════════════════════════════════════════
@@ -1809,92 +1930,15 @@ When you DO update code:
 ✅ Include if __name__ == "__main__": main()
 
 ⚠️ NEVER LIE ABOUT CODE UPDATES:
-❌ DON'T say "✅ Code updated" without including code block
-❌ DON'T claim update is done when asking for confirmation
+❌ DON'T say "Code updated" without including code block
 ✅ ONLY claim update when code block is in SAME response
-
-═══════════════════════════════════════════════════════════════
-              COMPLETE WORKING EXAMPLE SCRIPT
-═══════════════════════════════════════════════════════════════
-
-```python
-import os
-import tempfile
-import MapsBridge
-import cv2
-
-def main():
-    # Get tile to process (single tile mode)
-    tileInfo = request.TilesToProcess[0]
-    tile = next((t for t in sourceTileSet.Tiles 
-                 if t.Column == tileInfo.Column and t.Row == tileInfo.Row), None)
-    
-    # 🚨 CRITICAL: Use STRING key "0" not integer 0
-    tileFilename = tile.ImageFileNames["0"]
-    input_path = os.path.join(sourceTileSet.DataFolderPath, tileFilename)
-    
-    MapsBridge.LogInfo(f"Processing tile [{tile.Column}, {tile.Row}]")
-    
-    # Process image
-    img = cv2.imread(input_path)
-    result = cv2.GaussianBlur(img, (5, 5), 0)
-    
-    # Save to temp folder
-    output_folder = os.path.join(tempfile.gettempdir(), "output")
-    os.makedirs(output_folder, exist_ok=True)
-    output_path = os.path.join(output_folder, "result.tif")
-    cv2.imwrite(output_path, result)
-    
-    # Create output tile set
-    outputInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Results for " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
-    )
-    
-    # Create channel
-    MapsBridge.CreateChannel("Processed", (255,0,0), True, outputInfo.TileSet.Guid)
-    
-    # Send output
-    MapsBridge.SendSingleTileOutput(
-        tile.Row, tile.Column, "Processed",
-        output_path, True, outputInfo.TileSet.Guid
-    )
-    
-    MapsBridge.LogInfo("Processing complete!")
-
-if __name__ == "__main__":
-    main()
-```
-
-═══════════════════════════════════════════════════════════════
-                    QUICK REFERENCE
-═══════════════════════════════════════════════════════════════
-
-TILE SET vs IMAGE LAYER:
-- TileSet: Individual tiles, use request.TilesToProcess[0] → tile.ImageFileNames["0"]
-- ImageLayer: Stitched image, use request.PreparedImages.get("0")
-
-OUTPUT METHODS:
-- TileSet output: GetOrCreateOutputTileSet → CreateChannel → SendSingleTileOutput
-- ImageLayer output: CreateImageLayer
-
-CRITICAL:
-✅ Use STRING keys: ImageFileNames["0"], PreparedImages.get("0")
-✅ Save to tempfile.gettempdir()
-✅ Use keepFile=True
-✅ Call LogInfo/LogWarning/LogError for debugging
 
 ═══════════════════════════════════════════════════════════════
                     AI LEARNING FROM LOGS
 ═══════════════════════════════════════════════════════════════
 
 This system tracks all script executions to improve code generation.
-Learns from:
-- Common error patterns (imports, attributes, data access)
-- Library-specific issues
-- MapsBridge API misuse
-- Successful fix strategies
-
+Learns from error patterns, MapsBridge API misuse, and successful fix strategies.
 Your goal: Generate scripts that work on the first try using these proven patterns!"""
         
         # Inject runtime library lists into system context (avoid str.format because the prompt contains many `{}` braces)
@@ -1914,11 +1958,12 @@ Your goal: Generate scripts that work on the first try using these proven patter
         if ai_learning_context:
             system_context = system_context + "\n\n" + ai_learning_context
         
-        # Determine requested model (default to flash-lite)
-        requested_model = (request.model or "gemini-2.5-flash-lite").strip()
-        # Basic validation
-        allowed_models = {"gemini-2.5-flash-lite", "gemini-2.5-pro"}
-        if requested_model not in allowed_models:
+        # Validate model
+        allowed_gemini = {"gemini-2.5-flash-lite", "gemini-2.5-pro"}
+        allowed_openai = {"gpt-5-nano", "gpt-5-mini", "gpt-5", "gpt-5.1", "gpt-5.2", "gpt-5.1-codex-mini", "gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "gpt-4o"}
+        if use_openai and requested_model not in allowed_openai:
+            requested_model = "gpt-4o-mini"
+        elif not use_openai and requested_model not in allowed_gemini:
             requested_model = "gemini-2.5-flash-lite"
         
         # Build conversation history
@@ -1935,13 +1980,6 @@ Your goal: Generate scripts that work on the first try using these proven patter
         # Add AI learning context (use string concatenation to avoid .format() issues with curly braces in examples)
         if ai_learning_context:
             system_context = system_context + "\n\n" + ai_learning_context
-        
-        # Determine requested model (default to flash-lite)
-        requested_model = (request.model or "gemini-2.5-flash-lite").strip()
-        # Basic validation
-        allowed_models = {"gemini-2.5-flash-lite", "gemini-2.5-pro"}
-        if requested_model not in allowed_models:
-            requested_model = "gemini-2.5-flash-lite"
 
         # Build conversation history
         conversation = []
@@ -2027,35 +2065,55 @@ Your goal: Generate scripts that work on the first try using these proven patter
                 print(f"Warning: Failed to load image {request.image_url}: {e}")
                 # Continue without image if loading fails
         
-        # Start chat and get response
-        model = genai.GenerativeModel(requested_model)
-        chat = model.start_chat(history=conversation[:-1] if len(conversation) > 1 else [])
-        
-        # Prepare message parts (text + image if available)
-        message_parts = [conversation[-1]["parts"][0]]
-        if image_parts:
-            message_parts.extend(image_parts)
-        
-        try:
-            response = chat.send_message(message_parts)
-            response_text = response.text
-            
-            # Check if response is empty or None
-            if not response_text:
-                raise ValueError("AI returned an empty response")
-        except Exception as api_error:
-            # Handle specific Gemini API errors
-            error_msg = str(api_error)
-            if "429" in error_msg or "quota" in error_msg.lower() or "rate limit" in error_msg.lower():
-                raise Exception("API rate limit exceeded. Please try again in a moment.")
-            elif "401" in error_msg or "403" in error_msg or "invalid" in error_msg.lower() and "api" in error_msg.lower():
-                raise Exception("Invalid API key. Please check your GOOGLE_API_KEY configuration.")
-            elif "timeout" in error_msg.lower():
-                raise Exception("Request timed out. The AI service may be slow. Please try again.")
-            elif "safety" in error_msg.lower() or "blocked" in error_msg.lower():
-                raise Exception("Request was blocked by content safety filters. Please rephrase your question.")
-            else:
-                # Re-raise with more context
+        # Start chat and get response (OpenAI or Gemini)
+        if use_openai:
+            # OpenAI path
+            client = OpenAI(api_key=OPENAI_API_KEY)
+            messages = [{"role": "system", "content": system_context}]
+            for c in conversation:
+                role = "user" if c["role"] == "user" else "assistant"
+                content = c["parts"][0] if c["parts"] else ""
+                messages.append({"role": role, "content": content})
+            try:
+                resp = client.chat.completions.create(
+                    model=requested_model,
+                    messages=messages,
+                    max_completion_tokens=4096,
+                )
+                response_text = (resp.choices[0].message.content or "").strip()
+                if not response_text:
+                    raise ValueError("AI returned an empty response")
+            except Exception as api_error:
+                error_msg = str(api_error)
+                if "429" in error_msg or "rate_limit" in error_msg.lower():
+                    raise Exception("API rate limit exceeded. Please try again in a moment.")
+                elif "401" in error_msg or "403" in error_msg or "invalid_api_key" in error_msg.lower():
+                    raise Exception("Invalid API key. Please check your OPENAI_API_KEY configuration.")
+                elif "timeout" in error_msg.lower():
+                    raise Exception("Request timed out. Please try again.")
+                raise Exception(f"OpenAI API error: {error_msg}")
+        else:
+            # Gemini path
+            model = genai.GenerativeModel(requested_model)
+            chat = model.start_chat(history=conversation[:-1] if len(conversation) > 1 else [])
+            message_parts = [conversation[-1]["parts"][0]]
+            if image_parts:
+                message_parts.extend(image_parts)
+            try:
+                response = chat.send_message(message_parts)
+                response_text = response.text or ""
+                if not response_text:
+                    raise ValueError("AI returned an empty response")
+            except Exception as api_error:
+                error_msg = str(api_error)
+                if "429" in error_msg or "quota" in error_msg.lower() or "rate limit" in error_msg.lower():
+                    raise Exception("API rate limit exceeded. Please try again in a moment.")
+                elif "401" in error_msg or "403" in error_msg or "invalid" in error_msg.lower() and "api" in error_msg.lower():
+                    raise Exception("Invalid API key. Please check your GOOGLE_API_KEY configuration.")
+                elif "timeout" in error_msg.lower():
+                    raise Exception("Request timed out. The AI service may be slow. Please try again.")
+                elif "safety" in error_msg.lower() or "blocked" in error_msg.lower():
+                    raise Exception("Request was blocked by content safety filters. Please rephrase your question.")
                 raise Exception(f"AI API error: {error_msg}")
         
         # Check if AI is asking about data type and add quick replies
@@ -2587,7 +2645,7 @@ def get_default_scripts(db: Session = None):
     else:
         scripts = db.query(LibraryScript).order_by(LibraryScript.name).all()
         return [script.to_dict() for script in scripts]
-    """Return the default scripts that all new users should have"""
+    # Note: Old hardcoded scripts removed. Library scripts now loaded from database via seed_library_scripts.py
     return [
         {
             "name": "Thermal Colormap",
@@ -2622,18 +2680,18 @@ def get_thermal_channels(gray_array):
 
 def main():
     # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_info = source_tile_set.tiles[0]
     
     # 2. Load the input image
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
+    input_filename = tile_info.image_file_names["0"]
+    source_folder = source_tile_set.data_folder_path
     input_path = os.path.join(source_folder, input_filename)
     img = Image.open(input_path).convert("L")
     gray_array = np.array(img)
     
-    MapsBridge.LogInfo(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
+    MapsBridge.log_info(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
     
     # 3. Generate thermal colormap channels
     red_intensity, green_intensity, blue_intensity = get_thermal_channels(gray_array)
@@ -2652,33 +2710,33 @@ def main():
     Image.fromarray(blue_intensity, mode="L").save(blue_path)
     
     # 5. Create output tile set
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Thermal " + sourceTileSet.Name, 
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Thermal " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
+    output_tile_set = output_info.tile_set
     
     # 6. Create channels with their display colors (additive blending)
-    MapsBridge.CreateChannel("Red", (255, 0, 0), True, outputTileSet.Guid)
-    MapsBridge.CreateChannel("Green", (0, 255, 0), True, outputTileSet.Guid)
-    MapsBridge.CreateChannel("Blue", (0, 0, 255), True, outputTileSet.Guid)
+    MapsBridge.create_channel("Red", (255, 0, 0), True, output_tile_set.guid)
+    MapsBridge.create_channel("Green", (0, 255, 0), True, output_tile_set.guid)
+    MapsBridge.create_channel("Blue", (0, 0, 255), True, output_tile_set.guid)
     
     # 7. Send each intensity map to its channel
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Red", red_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Red", red_path, True, output_tile_set.guid
     )
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Green", green_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Green", green_path, True, output_tile_set.guid
     )
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Blue", blue_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Blue", blue_path, True, output_tile_set.guid
     )
     
-    MapsBridge.AppendNotes(f"Tile [{tileInfo.Column}, {tileInfo.Row}] processed\\\\n", outputTileSet.Guid)
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.append_notes(f"Tile [{tile_info.column}, {tile_info.row}] processed\\\\n", output_tile_set.guid)
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()"""
@@ -2697,23 +2755,23 @@ import numpy as np
 
 def main():
     # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_info = source_tile_set.tiles[0]
     
     # Get threshold from script parameters (default: 128)
     try:
-        threshold = float(request.ScriptParameters) if request.ScriptParameters else 128
+        threshold = float(request.script_parameters) if request.script_parameters else 128
     except ValueError:
         threshold = 128
     
     # 2. Load the input image
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
+    input_filename = tile_info.image_file_names["0"]
+    source_folder = source_tile_set.data_folder_path
     input_path = os.path.join(source_folder, input_filename)
     img = Image.open(input_path).convert("L")
     
-    MapsBridge.LogInfo(f"Loaded: {input_filename}, Threshold: {threshold}")
+    MapsBridge.log_info(f"Loaded: {input_filename}, Threshold: {threshold}")
     
     # 3. Apply threshold - pixels above threshold become white, below become black
     result = img.point(lambda p: 255 if p > threshold else 0)
@@ -2726,21 +2784,21 @@ def main():
     result.save(output_path)
     
     # 5. Create output tile set and channel
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Threshold " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Threshold " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
-    MapsBridge.CreateChannel("Highlight", (255, 0, 0), True, outputTileSet.Guid)
+    output_tile_set = output_info.tile_set
+    MapsBridge.create_channel("Highlight", (255, 0, 0), True, output_tile_set.guid)
     
     # 6. Send output
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Highlight", output_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Highlight", output_path, True, output_tile_set.guid
     )
     
-    MapsBridge.AppendNotes(f"Tile [{tileInfo.Column}, {tileInfo.Row}] threshold={threshold}\\\\n", outputTileSet.Guid)
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.append_notes(f"Tile [{tile_info.column}, {tile_info.row}] threshold={threshold}\\\\n", output_tile_set.guid)
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()"""
@@ -2778,18 +2836,18 @@ def sobel_edge_detection(img_array):
 
 def main():
     # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_info = source_tile_set.tiles[0]
     
     # 2. Load the input image
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
+    input_filename = tile_info.image_file_names["0"]
+    source_folder = source_tile_set.data_folder_path
     input_path = os.path.join(source_folder, input_filename)
     img = Image.open(input_path).convert("L")
     img_array = np.array(img)
     
-    MapsBridge.LogInfo(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
+    MapsBridge.log_info(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
     
     # 3. Apply edge detection
     edges = sobel_edge_detection(img_array)
@@ -2803,21 +2861,21 @@ def main():
     result.save(output_path)
     
     # 5. Create output tile set and channel
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Edges " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Edges " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
-    MapsBridge.CreateChannel("Edges", (0, 255, 255), True, outputTileSet.Guid)
+    output_tile_set = output_info.tile_set
+    MapsBridge.create_channel("Edges", (0, 255, 255), True, output_tile_set.guid)
     
     # 6. Send output
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Edges", output_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Edges", output_path, True, output_tile_set.guid
     )
     
-    MapsBridge.AppendNotes(f"Tile [{tileInfo.Column}, {tileInfo.Row}] edge detection\\\\n", outputTileSet.Guid)
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.append_notes(f"Tile [{tile_info.column}, {tile_info.row}] edge detection\\\\n", output_tile_set.guid)
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()"""
@@ -2835,16 +2893,16 @@ import MapsBridge
 
 def main():
     # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_info = source_tile_set.tiles[0]
     
     # 2. Get input path
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
+    input_filename = tile_info.image_file_names["0"]
+    source_folder = source_tile_set.data_folder_path
     input_path = os.path.join(source_folder, input_filename)
     
-    MapsBridge.LogInfo(f"Processing: {input_filename}")
+    MapsBridge.log_info(f"Processing: {input_filename}")
     
     # 3. Copy to temp folder (save as PNG for compatibility)
     output_folder = os.path.join(tempfile.gettempdir(), "copy_output")
@@ -2860,20 +2918,20 @@ def main():
     img.save(output_path)
     
     # 4. Create output tile set and channel
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Copy " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Copy " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
-    MapsBridge.CreateChannel("Original", (255, 255, 255), True, outputTileSet.Guid)
+    output_tile_set = output_info.tile_set
+    MapsBridge.create_channel("Original", (255, 255, 255), True, output_tile_set.guid)
     
     # 5. Send output
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Original", output_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Original", output_path, True, output_tile_set.guid
     )
     
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()"""
@@ -3028,26 +3086,26 @@ def make_category_rgb(category_map):
 
 def main():
     # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_info = source_tile_set.tiles[0]
 
     # 2. Load the input image (grayscale)
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
+    input_filename = tile_info.image_file_names["0"]
+    source_folder = source_tile_set.data_folder_path
     input_path = os.path.join(source_folder, input_filename)
     img = Image.open(input_path).convert("L")
     img_array = np.array(img)
 
-    MapsBridge.LogInfo(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
+    MapsBridge.log_info(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
 
     # 3. Preprocess: blur + CLAHE
     preprocessed = preprocess_image(img_array)
-    MapsBridge.LogInfo("Preprocessing complete (Gaussian blur + CLAHE)")
+    MapsBridge.log_info("Preprocessing complete (Gaussian blur + CLAHE)")
 
     # 4. Segment particles
     labeled, num_particles = segment_particles(preprocessed)
-    MapsBridge.LogInfo(f"Segmentation complete: {num_particles} particles found")
+    MapsBridge.log_info(f"Segmentation complete: {num_particles} particles found")
 
     # 5. Categorize particles
     category_map, stats = categorize_particles(labeled)
@@ -3056,7 +3114,7 @@ def main():
     n_round = sum(s["category"] == 1 for s in stats)
     n_irregular = sum(s["category"] == 2 for s in stats)
     n_small = sum(s["category"] == 3 for s in stats)
-    MapsBridge.LogInfo(
+    MapsBridge.log_info(
         f"Categories: {n_round} round, {n_irregular} irregular, {n_small} small"
     )
 
@@ -3082,51 +3140,51 @@ def main():
 
     mask_img = Image.fromarray(mask_visual, mode="L")
     mask_img.save(mask_path)
-    MapsBridge.LogInfo(f"Saved mask: {os.path.basename(mask_path)}")
+    MapsBridge.log_info(f"Saved mask: {os.path.basename(mask_path)}")
 
     # 9. Save category RGB image
     cat_img = Image.fromarray(category_rgb, mode="RGB")
     cat_img.save(cat_path)
-    MapsBridge.LogInfo(f"Saved categories: {os.path.basename(cat_path)}")
+    MapsBridge.log_info(f"Saved categories: {os.path.basename(cat_path)}")
 
     # 10. Create output tile set in MAPS
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Particle Categories " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs",
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Particle Categories " + source_tile_set.name,
+        target_layer_group_name="Outputs",
     )
-    outputTileSet = outputTileSetInfo.TileSet
+    output_tile_set = output_info.tile_set
 
     # 11. Create channels and send outputs
-    MapsBridge.CreateChannel("Labels", (255, 255, 255), True, outputTileSet.Guid)
-    MapsBridge.CreateChannel("Categories", (255, 255, 255), True, outputTileSet.Guid)
+    MapsBridge.create_channel("Labels", (255, 255, 255), True, output_tile_set.guid)
+    MapsBridge.create_channel("Categories", (255, 255, 255), True, output_tile_set.guid)
 
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row,
-        tileInfo.Column,
+    MapsBridge.send_single_tile_output(
+        tile_info.row,
+        tile_info.column,
         "Labels",
         mask_path,
         True,
-        outputTileSet.Guid,
+        output_tile_set.guid,
     )
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row,
-        tileInfo.Column,
+    MapsBridge.send_single_tile_output(
+        tile_info.row,
+        tile_info.column,
         "Categories",
         cat_path,
         True,
-        outputTileSet.Guid,
+        output_tile_set.guid,
     )
 
     # 12. Append notes (summary counts)
-    MapsBridge.AppendNotes(
+    MapsBridge.append_notes(
         (
-            f"Tile [{tileInfo.Column}, {tileInfo.Row}]: "
+            f"Tile [{tile_info.column}, {tile_info.row}]: "
             f"{num_particles} particles "
             f"({n_round} round, {n_irregular} irregular, {n_small} small)\\\\n"
         ),
-        outputTileSet.Guid,
+        output_tile_set.guid,
     )
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()"""
@@ -3148,24 +3206,24 @@ import matplotlib.cm as cm
 
 def main():
     # 1. Get the script request from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_info = source_tile_set.tiles[0]
     
     # 2. Get input image filename for channel "0"
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
+    input_filename = tile_info.image_file_names["0"]
+    source_folder = source_tile_set.data_folder_path
     input_path = os.path.join(source_folder, input_filename)
     
     # 3. Load the image and convert to grayscale, then to NumPy array
-    MapsBridge.LogInfo(f"Loading: {input_path}")
+    MapsBridge.log_info(f"Loading: {input_path}")
     img = Image.open(input_path).convert("L")  # Convert to grayscale
     gray_data = np.array(img)
     
     # 4. Apply the false color map
     # Normalize the grayscale data to the 0.0-1.0 range
     # This automatically handles both 8-bit and 16-bit images
-    MapsBridge.LogInfo("Applying 'viridis' colormap...")
+    MapsBridge.log_info("Applying 'viridis' colormap...")
     min_val = gray_data.min()
     max_val = gray_data.max()
     
@@ -3190,23 +3248,23 @@ def main():
     base, ext = os.path.splitext(input_filename)
     output_path = os.path.join(output_folder, f"{base}_color.png")
     result_image.save(output_path)
-    MapsBridge.LogInfo(f"Saved false color image to: {output_path}")
+    MapsBridge.log_info(f"Saved false color image to: {output_path}")
     
     # 6. Create the output tile set
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "False Color " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "False Color " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
+    output_tile_set = output_info.tile_set
     
     # 7. Create a channel for the colored output and send the result
-    MapsBridge.CreateChannel("Viridis", (255, 255, 255), True, outputTileSet.Guid)
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Viridis", output_path, True, outputTileSet.Guid
+    MapsBridge.create_channel("Viridis", (255, 255, 255), True, output_tile_set.guid)
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Viridis", output_path, True, output_tile_set.guid
     )
     
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()"""
@@ -3228,22 +3286,22 @@ import matplotlib.cm as cm
 
 def main():
     # 1. Get the script request from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_info = source_tile_set.tiles[0]
     
     # 2. Get input image filename for channel "0"
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
+    input_filename = tile_info.image_file_names["0"]
+    source_folder = source_tile_set.data_folder_path
     input_path = os.path.join(source_folder, input_filename)
     
     # 3. Load the image and convert to grayscale
-    MapsBridge.LogInfo(f"Loading: {input_path}")
+    MapsBridge.log_info(f"Loading: {input_path}")
     img = Image.open(input_path).convert("L")
     gray_data = np.array(img)
     
     # 4. Apply viridis colormap
-    MapsBridge.LogInfo("Applying 'viridis' colormap and separating channels...")
+    MapsBridge.log_info("Applying 'viridis' colormap and separating channels...")
     min_val = gray_data.min()
     max_val = gray_data.max()
     
@@ -3274,43 +3332,43 @@ def main():
     Image.fromarray(green_channel, mode="L").save(green_path)
     Image.fromarray(blue_channel, mode="L").save(blue_path)
     
-    MapsBridge.LogInfo("Saved R, G, B channels as grayscale intensity maps")
+    MapsBridge.log_info("Saved R, G, B channels as grayscale intensity maps")
     
     # 7. Create output tile set
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Viridis Multi-Channel " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Viridis Multi-Channel " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
+    output_tile_set = output_info.tile_set
     
     # 8. Create three channels with additive blending
     # Each channel gets its corresponding display color
-    MapsBridge.CreateChannel("Red Component", (255, 0, 0), True, outputTileSet.Guid)
-    MapsBridge.CreateChannel("Green Component", (0, 255, 0), True, outputTileSet.Guid)
-    MapsBridge.CreateChannel("Blue Component", (0, 0, 255), True, outputTileSet.Guid)
+    MapsBridge.create_channel("Red Component", (255, 0, 0), True, output_tile_set.guid)
+    MapsBridge.create_channel("Green Component", (0, 255, 0), True, output_tile_set.guid)
+    MapsBridge.create_channel("Blue Component", (0, 0, 255), True, output_tile_set.guid)
     
     # 9. Send each grayscale channel to Maps
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Red Component", red_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Red Component", red_path, True, output_tile_set.guid
     )
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Green Component", green_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Green Component", green_path, True, output_tile_set.guid
     )
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Blue Component", blue_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Blue Component", blue_path, True, output_tile_set.guid
     )
     
-    MapsBridge.AppendNotes(
-        f"Tile [{tileInfo.Column}, {tileInfo.Row}] - Viridis colormap as multi-channel.\\\\n"
+    MapsBridge.append_notes(
+        f"Tile [{tile_info.column}, {tile_info.row}] - Viridis colormap as multi-channel.\\\\n"
         "Toggle R/G/B channels independently, adjust thresholds, or segment by intensity!\\\\n",
-        outputTileSet.Guid
+        output_tile_set.guid
     )
     
-    MapsBridge.LogInfo("Done! Three channels created with additive blending.")
-    MapsBridge.LogInfo("In Maps: Toggle channels on/off, adjust thresholds independently!")
+    MapsBridge.log_info("Done! Three channels created with additive blending.")
+    MapsBridge.log_info("In Maps: Toggle channels on/off, adjust thresholds independently!")
 
 if __name__ == "__main__":
     main()"""

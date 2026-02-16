@@ -6729,8 +6729,22 @@ path = MapsBridge.GetPreparedImagePath(request, "0")`}</code></pre>
               value={aiModel}
               onChange={(e) => handleModelChange(e.target.value)}
             >
-              <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (fast)</option>
-              <option value="gemini-2.5-pro">gemini-2.5-pro (best quality)</option>
+              <optgroup label="Google Gemini">
+                <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (fast)</option>
+                <option value="gemini-2.5-pro">gemini-2.5-pro (best quality)</option>
+              </optgroup>
+              <optgroup label="OpenAI">
+                <option value="gpt-5-nano">gpt-5-nano</option>
+                <option value="gpt-5-mini">gpt-5-mini</option>
+                <option value="gpt-5">gpt-5</option>
+                <option value="gpt-5.1">gpt-5.1</option>
+                <option value="gpt-5.2">gpt-5.2</option>
+                <option value="gpt-5.1-codex-mini">gpt-5.1-codex-mini</option>
+                <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+                <option value="gpt-4.1">gpt-4.1</option>
+                <option value="gpt-4o-mini">gpt-4o-mini</option>
+                <option value="gpt-4o">gpt-4o</option>
+              </optgroup>
             </select>
           </div>
           <div className="assistant-messages" ref={messagesContainerRef}>

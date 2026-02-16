@@ -1,7 +1,8 @@
-﻿# Environment variables and API keys
+# Environment variables and API keys
 .env
 .env.local
 .env.*.local
+backend/secrets.py
 
 # Python
 __pycache__/
@@ -34,6 +35,9 @@ Thumbs.db
 # Outputs
 outputs/
 *.log
+
+# Logs
+logs/
 
 # Node modules (if any)
 node_modules/

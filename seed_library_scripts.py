@@ -1,5 +1,6 @@
 """
 Seed library scripts from hardcoded defaults into the database
+Scripts use MapsBridge v1.1.0 API (snake_case)
 """
 import sys
 sys.path.insert(0, 'backend')
@@ -12,7 +13,7 @@ from datetime import datetime
 LIBRARY_SCRIPTS = [
     {
         "name": "Thermal Colormap",
-        "description": "Applies a thermal/hot false-color visualization (black → red → yellow → white) using multi-channel output.",
+        "description": "Applies a thermal/hot false-color visualization (black \u2192 red \u2192 yellow \u2192 white) using multi-channel output.",
         "category": "Visualization",
         "tags": ["colormap", "thermal", "false-color"],
         "code": """# MAPS Script Bridge Example - False Color (Multi-Channel)
@@ -32,7 +33,6 @@ def get_thermal_channels(gray_array):
     \"\"\"
     normalized = gray_array.astype(np.float32) / 255.0
     
-    # Each channel is a grayscale intensity map
     r = np.clip(3.0 * normalized, 0, 1)
     g = np.clip(3.0 * normalized - 1.0, 0, 1)
     b = np.clip(3.0 * normalized - 2.0, 0, 1)
@@ -44,19 +44,19 @@ def get_thermal_channels(gray_array):
     )
 
 def main():
-    # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    # 1. Read tile set request
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
     
     # 2. Load the input image
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
-    input_path = os.path.join(source_folder, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     img = Image.open(input_path).convert("L")
     gray_array = np.array(img)
     
-    MapsBridge.LogInfo(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
+    MapsBridge.log_info(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
     
     # 3. Generate thermal colormap channels
     red_intensity, green_intensity, blue_intensity = get_thermal_channels(gray_array)
@@ -75,32 +75,32 @@ def main():
     Image.fromarray(blue_intensity, mode="L").save(blue_path)
     
     # 5. Create output tile set
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Thermal " + sourceTileSet.Name, 
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Thermal " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
+    output_tile_set = output_info.tile_set
     
     # 6. Create channels
-    MapsBridge.CreateChannel("Red", (255, 0, 0), True, outputTileSet.Guid)
-    MapsBridge.CreateChannel("Green", (0, 255, 0), True, outputTileSet.Guid)
-    MapsBridge.CreateChannel("Blue", (0, 0, 255), True, outputTileSet.Guid)
+    MapsBridge.create_channel("Red", (255, 0, 0), True, output_tile_set.guid)
+    MapsBridge.create_channel("Green", (0, 255, 0), True, output_tile_set.guid)
+    MapsBridge.create_channel("Blue", (0, 0, 255), True, output_tile_set.guid)
     
     # 7. Send outputs
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Red", red_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Red", red_path, True, output_tile_set.guid
     )
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Green", green_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Green", green_path, True, output_tile_set.guid
     )
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Blue", blue_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Blue", blue_path, True, output_tile_set.guid
     )
     
-    MapsBridge.AppendNotes("Applied thermal colormap (black->red->yellow->white)")
+    MapsBridge.append_notes("Applied thermal colormap (black->red->yellow->white)")
 
 if __name__ == "__main__":
     main()
@@ -120,17 +120,18 @@ import MapsBridge
 from PIL import Image
 
 def main():
-    # 1. Get input
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    # 1. Read tile set request
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
     
     # 2. Load image
-    input_filename = tileInfo.ImageFileNames["0"]
-    input_path = os.path.join(sourceTileSet.DataFolderPath, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     img = Image.open(input_path)
     
-    MapsBridge.LogInfo(f"Processing: {input_filename}")
+    MapsBridge.log_info(f"Processing: {input_filename}")
     
     # 3. Save to temp (no processing)
     output_folder = os.path.join(tempfile.gettempdir(), "copy_output")
@@ -138,20 +139,20 @@ def main():
     output_path = os.path.join(output_folder, input_filename)
     img.save(output_path)
     
-    # 4. Create output
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Copy of " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    # 4. Create output tile set
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Copy of " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
     
     # 5. Send output
-    MapsBridge.CreateChannel("Copy", (255, 255, 255), True, outputTileSetInfo.TileSet.Guid)
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Copy", output_path, True, outputTileSetInfo.TileSet.Guid
+    MapsBridge.create_channel("Copy", (255, 255, 255), True, output_info.tile_set.guid)
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Copy", output_path, True, output_info.tile_set.guid
     )
     
-    MapsBridge.AppendNotes("Image copied without modification")
+    MapsBridge.append_notes("Image copied without modification")
 
 if __name__ == "__main__":
     main()
@@ -171,16 +172,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def main():
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
     
-    input_filename = tileInfo.ImageFileNames["0"]
-    input_path = os.path.join(sourceTileSet.DataFolderPath, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     img = Image.open(input_path).convert("L")
     gray_array = np.array(img)
     
-    MapsBridge.LogInfo(f"Applying viridis colormap to {input_filename}")
+    MapsBridge.log_info(f"Applying viridis colormap to {input_filename}")
     
     # Apply viridis colormap
     normalized = gray_array.astype(np.float32) / 255.0
@@ -197,18 +199,18 @@ def main():
     Image.fromarray(rgb_array, mode="RGB").save(output_path)
     
     # Create output
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Viridis " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Viridis " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
     
-    MapsBridge.CreateChannel("Viridis", (255, 255, 255), True, outputTileSetInfo.TileSet.Guid)
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Viridis", output_path, True, outputTileSetInfo.TileSet.Guid
+    MapsBridge.create_channel("Viridis", (255, 255, 255), True, output_info.tile_set.guid)
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Viridis", output_path, True, output_info.tile_set.guid
     )
     
-    MapsBridge.AppendNotes("Applied Viridis colormap")
+    MapsBridge.append_notes("Applied Viridis colormap")
 
 if __name__ == "__main__":
     main()
@@ -229,29 +231,29 @@ from PIL import Image
 import numpy as np
 
 def main():
-    # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    # 1. Read tile set request
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
     
     # Get threshold from script parameters (default: 128)
     try:
-        threshold = float(request.ScriptParameters) if request.ScriptParameters else 128
+        threshold = float(request.script_parameters) if request.script_parameters else 128
     except ValueError:
         threshold = 128
     
     # 2. Load the input image
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
-    input_path = os.path.join(source_folder, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     img = Image.open(input_path).convert("L")
     
-    MapsBridge.LogInfo(f"Loaded: {input_filename}, Threshold: {threshold}")
+    MapsBridge.log_info(f"Loaded: {input_filename}, Threshold: {threshold}")
     
-    # 3. Apply threshold - pixels above threshold become white, below become black
+    # 3. Apply threshold
     result = img.point(lambda p: 255 if p > threshold else 0)
     
-    # 4. Save to temp folder (use PNG for compatibility)
+    # 4. Save to temp folder
     output_folder = os.path.join(tempfile.gettempdir(), "threshold_output")
     os.makedirs(output_folder, exist_ok=True)
     base, ext = os.path.splitext(input_filename)
@@ -259,21 +261,21 @@ def main():
     result.save(output_path)
     
     # 5. Create output tile set and channel
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Threshold " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Threshold " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
-    MapsBridge.CreateChannel("Highlight", (255, 0, 0), True, outputTileSet.Guid)
+    output_tile_set = output_info.tile_set
+    MapsBridge.create_channel("Highlight", (255, 0, 0), True, output_tile_set.guid)
     
     # 6. Send output
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Highlight", output_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Highlight", output_path, True, output_tile_set.guid
     )
     
-    MapsBridge.AppendNotes(f"Tile [{tileInfo.Column}, {tileInfo.Row}] threshold={threshold}\\n", outputTileSet.Guid)
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.append_notes(f"Tile [{tile_info.column}, {tile_info.row}] threshold={threshold}\\n", output_tile_set.guid)
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()
@@ -297,41 +299,36 @@ def sobel_edge_detection(img_array):
     \"\"\"Apply Sobel edge detection\"\"\"
     from scipy import ndimage
     
-    # Sobel kernels
     sobel_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
     sobel_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])
     
-    # Apply convolution
     gx = ndimage.convolve(img_array.astype(float), sobel_x)
     gy = ndimage.convolve(img_array.astype(float), sobel_y)
     
-    # Compute magnitude
     magnitude = np.sqrt(gx**2 + gy**2)
-    
-    # Normalize to 0-255
     magnitude = (magnitude / magnitude.max() * 255).astype(np.uint8)
     return magnitude
 
 def main():
-    # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    # 1. Read tile set request
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
     
     # 2. Load the input image
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
-    input_path = os.path.join(source_folder, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     img = Image.open(input_path).convert("L")
     img_array = np.array(img)
     
-    MapsBridge.LogInfo(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
+    MapsBridge.log_info(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
     
     # 3. Apply edge detection
     edges = sobel_edge_detection(img_array)
     result = Image.fromarray(edges, mode="L")
     
-    # 4. Save to temp folder (use PNG for compatibility)
+    # 4. Save to temp folder
     output_folder = os.path.join(tempfile.gettempdir(), "edge_output")
     os.makedirs(output_folder, exist_ok=True)
     base, ext = os.path.splitext(input_filename)
@@ -339,21 +336,21 @@ def main():
     result.save(output_path)
     
     # 5. Create output tile set and channel
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Edges " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Edges " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
-    MapsBridge.CreateChannel("Edges", (0, 255, 255), True, outputTileSet.Guid)
+    output_tile_set = output_info.tile_set
+    MapsBridge.create_channel("Edges", (0, 255, 255), True, output_tile_set.guid)
     
     # 6. Send output
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Edges", output_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Edges", output_path, True, output_tile_set.guid
     )
     
-    MapsBridge.AppendNotes(f"Tile [{tileInfo.Column}, {tileInfo.Row}] edge detection\\n", outputTileSet.Guid)
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.append_notes(f"Tile [{tile_info.column}, {tile_info.row}] edge detection\\n", output_tile_set.guid)
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()
@@ -366,9 +363,6 @@ if __name__ == "__main__":
         "tags": ["segmentation", "particles", "shape-analysis"],
         "code": """# MAPS Script Bridge - Particle Categorization
 # Segments particles in EM images, measures shape, and categorizes them.
-# Outputs:
-#   1) Grayscale mask (labels per particle)
-#   2) RGB visualization colored by category (round / irregular / small)
 
 import os
 import tempfile
@@ -378,123 +372,77 @@ import numpy as np
 from scipy import ndimage
 from skimage import filters, morphology, measure, exposure
 
-# ============================================================================
-# TUNABLE PARAMETERS - Adjust for your specific images
-# ============================================================================
-
-GAUSSIAN_SIGMA = 1.5          # Noise reduction blur
-CLAHE_CLIP_LIMIT = 0.03       # Contrast enhancement
-MIN_PARTICLE_SIZE = 50        # Minimum particle area in pixels
-FILL_HOLES = True             # Fill holes inside particles
-
-# In this image, particles are BRIGHT on a DARK background
+# Tunable parameters
+GAUSSIAN_SIGMA = 1.5
+CLAHE_CLIP_LIMIT = 0.03
+MIN_PARTICLE_SIZE = 50
+FILL_HOLES = True
 PARTICLES_ARE_DARK = False
-
-# ---- Categorization thresholds ---------------------------------------------
-
-# Anything smaller than this (in pixels) is "small"
 SMALL_AREA_THRESHOLD = 300
-
-# Circularity = 4*pi*area / perimeter^2
-# Perfect circle = 1.0, irregular shapes < 0.8
 CIRCULARITY_ROUND_THRESHOLD = 0.8
-
-# Solidity = area / convex_hull_area
-# Solid objects close to 1.0, objects with concavities < 0.9
 SOLIDITY_ROUND_THRESHOLD = 0.9
 
-# ============================================================================
-
 def preprocess_image(img_array):
-    \"\"\"Apply contrast enhancement and noise reduction\"\"\"
-    # Apply CLAHE for local contrast
     img_clahe = exposure.equalize_adapthist(img_array, clip_limit=CLAHE_CLIP_LIMIT)
-    
-    # Gaussian blur to reduce noise
     img_blur = ndimage.gaussian_filter(img_clahe, sigma=GAUSSIAN_SIGMA)
-    
     return img_blur
 
 def segment_particles(img_array, particles_are_dark=False):
-    \"\"\"Segment particles using Otsu thresholding\"\"\"
-    # Otsu threshold
     threshold = filters.threshold_otsu(img_array)
-    
-    # Create binary mask
     if particles_are_dark:
         binary = img_array < threshold
     else:
         binary = img_array > threshold
-    
-    # Fill holes if requested
     if FILL_HOLES:
         binary = ndimage.binary_fill_holes(binary)
-    
-    # Remove small objects
     binary = morphology.remove_small_objects(binary, min_size=MIN_PARTICLE_SIZE)
-    
-    # Label connected components
     labels = measure.label(binary)
-    
     return labels
 
 def categorize_particles(labels):
-    \"\"\"Categorize each particle by shape metrics\"\"\"
     props = measure.regionprops(labels)
-    
-    categories = {}  # particle_label -> category
-    
+    categories = {}
     for prop in props:
         label = prop.label
         area = prop.area
         perimeter = prop.perimeter
-        
-        # Calculate metrics
         circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
         solidity = prop.solidity
-        
-        # Categorize
         if area < SMALL_AREA_THRESHOLD:
             categories[label] = 'small'
         elif circularity >= CIRCULARITY_ROUND_THRESHOLD and solidity >= SOLIDITY_ROUND_THRESHOLD:
             categories[label] = 'round'
         else:
             categories[label] = 'irregular'
-    
     return categories
 
 def create_category_visualization(labels, categories):
-    \"\"\"Create RGB image colored by category\"\"\"
     h, w = labels.shape
     rgb = np.zeros((h, w, 3), dtype=np.uint8)
-    
-    # Color mapping
     colors = {
-        'small': (100, 100, 100),      # Gray
-        'round': (0, 255, 0),           # Green
-        'irregular': (255, 165, 0)      # Orange
+        'small': (100, 100, 100),
+        'round': (0, 255, 0),
+        'irregular': (255, 165, 0)
     }
-    
     for label, category in categories.items():
         mask = labels == label
         rgb[mask] = colors[category]
-    
     return rgb
 
 def main():
-    # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    # 1. Read tile set request
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
     
     # 2. Load the input image
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
-    input_path = os.path.join(source_folder, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     img = Image.open(input_path).convert("L")
-    img_array = np.array(img) / 255.0  # Normalize to 0-1
+    img_array = np.array(img) / 255.0
     
-    MapsBridge.LogInfo(f"Loaded: {input_filename}")
+    MapsBridge.log_info(f"Loaded: {input_filename}")
     
     # 3. Preprocess
     img_processed = preprocess_image(img_array)
@@ -502,54 +450,48 @@ def main():
     # 4. Segment particles
     labels = segment_particles(img_processed, PARTICLES_ARE_DARK)
     num_particles = labels.max()
-    MapsBridge.LogInfo(f"Found {num_particles} particles")
+    MapsBridge.log_info(f"Found {num_particles} particles")
     
     # 5. Categorize particles
     categories = categorize_particles(labels)
-    
-    # Count categories
     small_count = sum(1 for c in categories.values() if c == 'small')
     round_count = sum(1 for c in categories.values() if c == 'round')
     irregular_count = sum(1 for c in categories.values() if c == 'irregular')
+    MapsBridge.log_info(f"Categories - Small: {small_count}, Round: {round_count}, Irregular: {irregular_count}")
     
-    MapsBridge.LogInfo(f"Categories - Small: {small_count}, Round: {round_count}, Irregular: {irregular_count}")
-    
-    # 6. Create visualizations
+    # 6. Create visualization
     rgb_viz = create_category_visualization(labels, categories)
     
-    # 7. Save outputs
+    # 7. Save output
     output_folder = os.path.join(tempfile.gettempdir(), "particle_output")
     os.makedirs(output_folder, exist_ok=True)
     base, _ = os.path.splitext(input_filename)
-    
     rgb_path = os.path.join(output_folder, f"{base}_categories.png")
     Image.fromarray(rgb_viz).save(rgb_path)
     
     # 8. Create output tile set
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Particles " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Particles " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
+    output_tile_set = output_info.tile_set
     
-    # 9. Create channels
-    MapsBridge.CreateChannel("Categories", (255, 255, 255), True, outputTileSet.Guid)
-    
-    # 10. Send output
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Categories", rgb_path, True, outputTileSet.Guid
+    # 9. Create channel and send output
+    MapsBridge.create_channel("Categories", (255, 255, 255), True, output_tile_set.guid)
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Categories", rgb_path, True, output_tile_set.guid
     )
     
-    # 11. Add notes
-    notes = f"Tile [{tileInfo.Column}, {tileInfo.Row}]\\n"
+    # 10. Add notes
+    notes = f"Tile [{tile_info.column}, {tile_info.row}]\\n"
     notes += f"Total particles: {num_particles}\\n"
     notes += f"Small (gray): {small_count}\\n"
     notes += f"Round (green): {round_count}\\n"
     notes += f"Irregular (orange): {irregular_count}\\n"
-    MapsBridge.AppendNotes(notes, outputTileSet.Guid)
+    MapsBridge.append_notes(notes, output_tile_set.guid)
     
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()
@@ -573,29 +515,24 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 def main():
-    # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    # 1. Read tile set request
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
     
     # 2. Load the input image
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
-    input_path = os.path.join(source_folder, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     img = Image.open(input_path).convert("L")
     gray_array = np.array(img)
     
-    MapsBridge.LogInfo(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
+    MapsBridge.log_info(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
     
     # 3. Apply Viridis colormap
-    # Normalize to 0-1
     normalized = gray_array.astype(np.float32) / 255.0
-    
-    # Apply colormap
     cmap = plt.get_cmap('viridis')
     colored = cmap(normalized)
-    
-    # Convert to RGB (0-255)
     rgb = (colored[:, :, :3] * 255).astype(np.uint8)
     
     # 4. Save output
@@ -603,25 +540,24 @@ def main():
     os.makedirs(output_folder, exist_ok=True)
     base, ext = os.path.splitext(input_filename)
     output_path = os.path.join(output_folder, f"{base}_viridis.png")
-    
     Image.fromarray(rgb).save(output_path)
     
     # 5. Create output tile set and channel
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Viridis " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Viridis " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
-    MapsBridge.CreateChannel("False Color", (255, 255, 255), True, outputTileSet.Guid)
+    output_tile_set = output_info.tile_set
+    MapsBridge.create_channel("False Color", (255, 255, 255), True, output_tile_set.guid)
     
     # 6. Send output
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "False Color", output_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "False Color", output_path, True, output_tile_set.guid
     )
     
-    MapsBridge.AppendNotes(f"Tile [{tileInfo.Column}, {tileInfo.Row}] - Viridis colormap\\n", outputTileSet.Guid)
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.append_notes(f"Tile [{tile_info.column}, {tile_info.row}] - Viridis colormap\\n", output_tile_set.guid)
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()
@@ -633,27 +569,24 @@ if __name__ == "__main__":
 def seed_library_scripts():
     """Seed the library_scripts table with default examples"""
     print("=" * 60)
-    print("Seeding Library Scripts")
+    print("Seeding Library Scripts (MapsBridge v1.1.0 API)")
     print("=" * 60)
     print()
     
     with get_db_session() as db:
-        # Check if scripts already exist
         existing_count = db.query(LibraryScript).count()
         if existing_count > 0:
-            print(f"⚠ Found {existing_count} existing library scripts")
+            print(f"Found {existing_count} existing library scripts")
             response = input("Do you want to replace them? (y/n): ")
             if response.lower() != 'y':
                 print("Skipping seed")
                 return
             
-            # Delete existing
             db.query(LibraryScript).delete()
             db.commit()
-            print(f"✓ Deleted {existing_count} existing scripts")
+            print(f"Deleted {existing_count} existing scripts")
             print()
         
-        # Add library scripts
         added_count = 0
         for script_data in LIBRARY_SCRIPTS:
             library_script = LibraryScript(
@@ -666,13 +599,13 @@ def seed_library_scripts():
             )
             db.add(library_script)
             added_count += 1
-            print(f"✓ Added: {script_data['name']}")
+            print(f"  Added: {script_data['name']}")
         
         db.commit()
         
         print()
         print("=" * 60)
-        print(f"✓ Seeded {added_count} library scripts successfully!")
+        print(f"Seeded {added_count} library scripts successfully!")
         print("=" * 60)
 
 

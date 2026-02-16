@@ -7,8 +7,9 @@ This demonstrates how to interact with the logging system from Python code.
 import pathlib
 import sys
 
-# Add backend to path
-sys.path.insert(0, str(pathlib.Path(__file__).parent / "backend"))
+# Project root (script lives in scripts/archive)
+_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_ROOT / "backend"))
 
 from script_logger import ScriptLogger
 from log_analyzer import LogAnalyzer
@@ -18,7 +19,7 @@ def main():
     """Example usage of logging system"""
     
     # Initialize logger and analyzer
-    logs_dir = pathlib.Path(__file__).parent / "logs"
+    logs_dir = _ROOT / "logs"
     logger = ScriptLogger(logs_dir)
     analyzer = LogAnalyzer(logs_dir)
     

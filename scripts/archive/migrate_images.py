@@ -4,14 +4,15 @@ import sys
 import pathlib
 from PIL import Image as PILImage
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent / "backend"))
+_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_ROOT / "backend"))
 
 from backend.database import get_db_session
 from backend.models import LibraryImage, UserImage
 from datetime import datetime
 
-LIBRARY_IMAGES_DIR = pathlib.Path(__file__).parent / "library" / "images"
-METADATA_FILE = pathlib.Path(__file__).parent / "library" / "metadata.json"
+LIBRARY_IMAGES_DIR = _ROOT / "library" / "images"
+METADATA_FILE = _ROOT / "library" / "metadata.json"
 
 def migrate_images():
     print("=" * 60)

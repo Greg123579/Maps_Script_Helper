@@ -61,6 +61,9 @@ echo Changes to backend/ and frontend/ files will auto-reload
 echo Press Ctrl+C to stop the server
 echo.
 
+REM Set HOST_PROJECT_DIR for Docker-in-Docker script execution (required for volume mounts)
+set PWD=%CD%
+
 REM Start with docker-compose (preferred method)
 %COMPOSE_CMD% up --build
 

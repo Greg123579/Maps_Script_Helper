@@ -12,13 +12,14 @@ import sys
 from datetime import datetime
 from PIL import Image
 
-# Add backend to path
-sys.path.insert(0, str(pathlib.Path(__file__).parent / "backend"))
+# Project root (script lives in scripts/archive)
+_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_ROOT / "backend"))
 
 from backend.database import get_db_session, init_database
 from backend.models import User, UserScript, LibraryImage, UserImage
 
-BASE_DIR = pathlib.Path(__file__).parent
+BASE_DIR = _ROOT
 USERS_FILE = BASE_DIR / "users.json"
 USER_SCRIPTS_DIR = BASE_DIR / "user_scripts"
 LIBRARY_METADATA_FILE = BASE_DIR / "library" / "metadata.json"
