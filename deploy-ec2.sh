@@ -203,9 +203,13 @@ log_step "Step 6/6: Building and starting the application"
 log_info "Building py-exec sandbox image..."
 docker build -t py-exec:latest "${DEPLOY_DIR}/backend/runner_image/"
 
-# Build and start the application using production compose
-log_info "Building and starting Maps Script Helper..."
-docker compose -f docker-compose.prod.yml up -d --build
+# Build backend image with classic docker build (avoids buildx version requirement on older EC2)
+log_info "Building Maps Script Helper backend image..."
+docker build -t maps-helper-backend .
+
+# Start the application (use pre-built image; no compose --build)
+log_info "Starting Maps Script Helper..."
+docker compose -f docker-compose.prod.yml up -d
 
 # --- Post-deployment ---
 echo ""
