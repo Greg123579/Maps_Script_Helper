@@ -50,6 +50,126 @@ def init_database():
     print("[Database] ✓ Database initialized successfully")
 
 
+def migrate_add_password_hash():
+    """Add password_hash column to users table if missing (one-way migration)."""
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)"))
+            conn.commit()
+        print("[Database] ✓ Added password_hash column to users")
+    except Exception as e:
+        msg = str(e).lower()
+        if "duplicate" in msg or "already exists" in msg:
+            pass  # Column already there
+        else:
+            print(f"[Database] Note: migrate_add_password_hash: {e}")
+
+
+def migrate_add_community_fields():
+    """Add community sharing columns to user_scripts table if missing."""
+    from sqlalchemy import text
+    columns = [
+        ("is_community", "BOOLEAN DEFAULT 0"),
+        ("community_image_id", "VARCHAR(36)"),
+        ("community_image_url", "VARCHAR(500)"),
+        ("community_image_name", "VARCHAR(255)"),
+    ]
+    for col_name, col_type in columns:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(f"ALTER TABLE user_scripts ADD COLUMN {col_name} {col_type}"))
+                conn.commit()
+            print(f"[Database] ✓ Added {col_name} column to user_scripts")
+        except Exception as e:
+            msg = str(e).lower()
+            if "duplicate" in msg or "already exists" in msg:
+                pass
+            else:
+                print(f"[Database] Note: migrate_add_community_fields ({col_name}): {e}")
+
+
+def migrate_add_global_image_field():
+    """Add is_global column to user_images table if missing."""
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE user_images ADD COLUMN is_global BOOLEAN DEFAULT 0"))
+            conn.commit()
+        print("[Database] ✓ Added is_global column to user_images")
+    except Exception as e:
+        msg = str(e).lower()
+        if "duplicate" in msg or "already exists" in msg:
+            pass
+        else:
+            print(f"[Database] Note: migrate_add_global_image_field: {e}")
+
+
+def migrate_add_user_email_display_name():
+    """Add email column to users table if missing."""
+    from sqlalchemy import text
+    for col_name, col_type in [("email", "VARCHAR(255)")]:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
+                conn.commit()
+            print(f"[Database] ✓ Added {col_name} column to users")
+        except Exception as e:
+            msg = str(e).lower()
+            if "duplicate" in msg or "already exists" in msg:
+                pass
+            else:
+                print(f"[Database] Note: migrate_add_user_email_display_name ({col_name}): {e}")
+
+
+def migrate_create_password_reset_tokens():
+    """Create password_reset_tokens table if it doesn't exist."""
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                    id VARCHAR(36) PRIMARY KEY,
+                    token VARCHAR(64) NOT NULL UNIQUE,
+                    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    expires_at DATETIME NOT NULL,
+                    used_at DATETIME
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_token ON password_reset_tokens (token)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_user_id ON password_reset_tokens (user_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_expires_at ON password_reset_tokens (expires_at)"))
+            conn.commit()
+        print("[Database] ✓ Ensured password_reset_tokens table exists")
+    except Exception as e:
+        print(f"[Database] Note: migrate_create_password_reset_tokens: {e}")
+
+
+def migrate_create_script_ratings():
+    """Create script_ratings table if it doesn't exist."""
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS script_ratings (
+                    id VARCHAR(36) PRIMARY KEY,
+                    script_id VARCHAR(36) NOT NULL REFERENCES user_scripts(id) ON DELETE CASCADE,
+                    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    rating INTEGER NOT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ix_script_ratings_user_script
+                ON script_ratings (script_id, user_id)
+            """))
+            conn.commit()
+        print("[Database] ✓ Ensured script_ratings table exists")
+    except Exception as e:
+        print(f"[Database] Note: migrate_create_script_ratings: {e}")
+
+
 def get_db() -> Generator[Session, None, None]:
     """
     Dependency for FastAPI endpoints to get database session.
@@ -105,19 +225,24 @@ def ensure_database():
     """
     if DATABASE_PATH.exists():
         print(f"[Database] Using existing database at: {DATABASE_PATH}")
-        return
-    
-    # Ensure the parent directory exists (e.g., /deploy/)
-    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Check if we have a bundled DB to copy (only when DATABASE_PATH != BUNDLED_DB_PATH)
-    if DATABASE_PATH != BUNDLED_DB_PATH and BUNDLED_DB_PATH.exists():
-        print(f"[Database] Copying bundled database from {BUNDLED_DB_PATH} to {DATABASE_PATH}")
-        shutil.copy2(str(BUNDLED_DB_PATH), str(DATABASE_PATH))
-        print("[Database] ✓ Bundled database copied to PVC successfully")
     else:
-        print("[Database] No existing database found, creating new database")
-        init_database()
+        # Ensure the parent directory exists (e.g., /deploy/)
+        DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # Check if we have a bundled DB to copy (only when DATABASE_PATH != BUNDLED_DB_PATH)
+        if DATABASE_PATH != BUNDLED_DB_PATH and BUNDLED_DB_PATH.exists():
+            print(f"[Database] Copying bundled database from {BUNDLED_DB_PATH} to {DATABASE_PATH}")
+            shutil.copy2(str(BUNDLED_DB_PATH), str(DATABASE_PATH))
+            print("[Database] ✓ Bundled database copied to PVC successfully")
+        else:
+            print("[Database] No existing database found, creating new database")
+            init_database()
+    # Always run schema migrations for existing databases
+    migrate_add_password_hash()
+    migrate_add_community_fields()
+    migrate_add_global_image_field()
+    migrate_create_script_ratings()
+    migrate_add_user_email_display_name()
+    migrate_create_password_reset_tokens()
 
 
 # Initialize database on import

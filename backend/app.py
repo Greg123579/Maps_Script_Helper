@@ -9,7 +9,7 @@ def _log_import(module_name: str):
     print(f"[Startup] {elapsed:.2f}s - Importing {module_name}...")
 
 _log_import("FastAPI")
-from fastapi import FastAPI, UploadFile, File, Form, Response, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, Form, Response, HTTPException, Depends, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,14 +32,14 @@ from sqlalchemy import desc
 try:
     from backend.script_logger import ScriptLogger
     from backend.log_analyzer import LogAnalyzer
-    from backend.database import get_db, init_database
-    from backend.models import User, UserScript, LibraryImage, UserImage, LibraryScript, ExecutionSession
+    from backend.database import get_db, init_database, reset_database
+    from backend.models import User, UserScript, LibraryImage, UserImage, LibraryScript, ExecutionSession, ScriptRating, PasswordResetToken
 except ImportError:
     # When running from backend/ directory
     from script_logger import ScriptLogger
     from log_analyzer import LogAnalyzer
-    from database import get_db, init_database
-    from models import User, UserScript, LibraryImage, UserImage, LibraryScript, ExecutionSession
+    from database import get_db, init_database, reset_database
+    from models import User, UserScript, LibraryImage, UserImage, LibraryScript, ExecutionSession, ScriptRating, PasswordResetToken
 
 # Initialize script execution runtime (auto-detects Docker or Kubernetes)
 _log_import("Script execution runtime")
@@ -77,11 +77,11 @@ _import_time = time.time() - _start_time
 print(f"[Startup] {_import_time:.2f}s - All imports complete")
 
 # Version tracking
-API_VERSION = "1.20.1"  # Fixed batch file syntax, added startup timing logs, improved deployment script
+API_VERSION = "1.20.2"  # Admin area, improved login UX, removed deploy/logs/danger zone from settings
 
 # Configure Gemini AI (env vars override hardcoded secrets in backend/secrets.py)
 _secrets_path = pathlib.Path(__file__).resolve().parent / "secrets.py"
-_SECRET_GOOGLE, _SECRET_OPENAI = "", ""
+_SECRET_GOOGLE, _SECRET_OPENAI, _SECRET_ADMIN = "", "", ""
 if _secrets_path.exists():
     import importlib.util
     _spec = importlib.util.spec_from_file_location("_api_secrets", _secrets_path)
@@ -90,6 +90,7 @@ if _secrets_path.exists():
         _spec.loader.exec_module(_mod)
         _SECRET_GOOGLE = getattr(_mod, "GOOGLE_API_KEY", "") or ""
         _SECRET_OPENAI = getattr(_mod, "OPENAI_API_KEY", "") or ""
+        _SECRET_ADMIN = getattr(_mod, "ADMIN_PASSWORD", "") or ""
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or _SECRET_GOOGLE or ""
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or _SECRET_OPENAI or ""
 if GOOGLE_API_KEY:
@@ -98,6 +99,87 @@ if GOOGLE_API_KEY:
     print(f"✓ Gemini AI configured (Key: {masked_key})")
 else:
     print("⚠ GOOGLE_API_KEY not set. Gemini models will not work.")
+
+# Admin: password required for /admin and /api/admin/* (env or backend/secrets.py)
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD") or _SECRET_ADMIN or ""
+
+# Auth: JWT secret (use env in production)
+JWT_SECRET = os.getenv("JWT_SECRET", "maps-helper-dev-secret-change-in-production")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRY_DAYS = 30
+try:
+    from passlib.context import CryptContext
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    import jwt as pyjwt
+except ImportError:
+    pwd_context = None
+    pyjwt = None
+    print("⚠ passlib/PyJWT not installed. Auth endpoints will be disabled.")
+
+
+def _create_jwt(user_id: str) -> str:
+    """Create a JWT for the given user id. Requires pyjwt and JWT_SECRET."""
+    if pyjwt is None:
+        raise RuntimeError("JWT not available")
+    from datetime import timedelta
+    exp = datetime.utcnow() + timedelta(days=JWT_EXPIRY_DAYS)
+    return pyjwt.encode(
+        {"sub": user_id, "exp": exp},
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM
+    )
+
+
+def get_current_user_optional(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Return the current user if a valid JWT is present; otherwise None (anonymous)."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization.replace("Bearer ", "").strip()
+    if not token or pyjwt is None:
+        return None
+    try:
+        payload = pyjwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        user = db.query(User).filter(User.id == user_id).first()
+        return user
+    except Exception:
+        return None
+
+
+def get_current_user(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+) -> User:
+    """Require a valid JWT. Raises HTTPException 403 for anonymous."""
+    user = get_current_user_optional(authorization=authorization, db=db)
+    if user is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Create an account to save scripts."
+        )
+    return user
+
+
+def verify_admin_password(x_admin_password: Optional[str] = Header(None, alias="X-Admin-Password")):
+    """Require valid admin password. Used for /api/admin/* endpoints."""
+    if not ADMIN_PASSWORD:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin password not configured (set ADMIN_PASSWORD env var)."
+        )
+    if not x_admin_password or x_admin_password != ADMIN_PASSWORD:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing admin password."
+        )
+    return True
+
+
 if OPENAI_API_KEY:
     masked = f"{OPENAI_API_KEY[:7]}...{OPENAI_API_KEY[-4:]}" if len(OPENAI_API_KEY) > 11 else "***"
     print(f"✓ OpenAI configured (Key: {masked})")
@@ -351,10 +433,16 @@ USERS_FILE = BASE_DIR / "users.json"  # Track user accounts
 # Library images stay baked into the Docker image at /app/library/images/
 USER_UPLOADS_DIR = ASSETS_DIR / "uploads"
 
+# Thumbnail directories (cached alongside originals)
+LIBRARY_THUMBNAILS_DIR = LIBRARY_DIR / "thumbnails"
+USER_THUMBNAILS_DIR = ASSETS_DIR / "thumbnails"
+
 # Ensure library directories exist
 LIBRARY_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 USER_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+LIBRARY_THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
+USER_THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 if not LIBRARY_METADATA_FILE.exists():
     LIBRARY_METADATA_FILE.write_text("{}", encoding="utf-8")
@@ -1378,8 +1466,8 @@ async def chat_with_ai(request: ChatRequest):
     Supports Google Gemini and OpenAI models. Uses server-configured API keys.
     """
     # Determine requested model early for API key check
-    requested_model = (request.model or "gemini-2.5-flash-lite").strip()
-    use_openai = requested_model.startswith("gpt-")
+    requested_model = (request.model or "codex-mini-latest").strip()
+    use_openai = requested_model.startswith("gpt-") or requested_model.startswith("codex-")
     # Check appropriate API key
     if use_openai:
         if not OPENAI_API_KEY:
@@ -1960,9 +2048,9 @@ Your goal: Generate scripts that work on the first try using these proven patter
         
         # Validate model
         allowed_gemini = {"gemini-2.5-flash-lite", "gemini-2.5-pro"}
-        allowed_openai = {"gpt-5-nano", "gpt-5-mini", "gpt-5", "gpt-5.1", "gpt-5.2", "gpt-5.1-codex-mini", "gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "gpt-4o"}
+        allowed_openai = {"gpt-5-nano", "gpt-5-mini", "gpt-5", "gpt-4.1", "gpt-5.1", "codex-mini-latest", "gpt-5.2-codex"}
         if use_openai and requested_model not in allowed_openai:
-            requested_model = "gpt-4o-mini"
+            requested_model = "codex-mini-latest"
         elif not use_openai and requested_model not in allowed_gemini:
             requested_model = "gemini-2.5-flash-lite"
         
@@ -2374,25 +2462,20 @@ async def upload_library_image(
     name: str = Form(...),
     description: str = Form(""),
     image_type: str = Form(...),  # SEM, SDB, TEM, or OPTICAL
-    user_id: Optional[str] = Form(None),
-    db: Session = Depends(get_db)
+    user_id: Optional[str] = Form(None),  # legacy; auth uses current_user
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    """Upload an image to the library with metadata (stored in database)"""
+    """Upload an image to the library. Requires login; anonymous users get a message to create an account."""
+    if not current_user:
+        return JSONResponse(
+            {"error": "Create an account to upload images.", "require_auth": True},
+            status_code=403
+        )
     if image_type not in ["SEM", "SDB", "TEM", "OPTICAL"]:
         return JSONResponse({"error": "Image type must be SEM, SDB, TEM, or OPTICAL"}, status_code=400)
-    
-    if not user_id:
-        return JSONResponse({"error": "user_id is required"}, status_code=400)
-    
-    # Verify user exists
-    print(f"[Upload] Received user_id: '{user_id}' (type: {type(user_id).__name__})")
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        all_users = db.query(User).all()
-        print(f"[Upload] User not found. Available users: {[f'{u.name} ({u.id})' for u in all_users]}")
-        return JSONResponse({"error": "User not found"}, status_code=404)
-    print(f"[Upload] User found: {user.name} (ID: {user.id})")
-    
+    user_id = current_user.id
+
     # Generate unique ID
     image_id = str(uuid.uuid4())
     
@@ -2415,6 +2498,9 @@ async def upload_library_image(
     except:
         pass
     
+    # Generate thumbnail eagerly so first display is fast
+    _get_or_create_thumbnail(image_path, USER_THUMBNAILS_DIR, image_filename)
+
     # Create user image in database
     new_image = UserImage(
         id=image_id,
@@ -2437,6 +2523,7 @@ async def upload_library_image(
         "description": description,
         "type": image_type,
         "url": f"/uploads/images/{image_filename}",
+        "thumbnail_url": f"/uploads/images/{image_filename}?thumbnail=true",
         "width": width,
         "height": height,
         "file_size": file_size
@@ -2447,25 +2534,95 @@ def list_library_images(user_id: Optional[str] = None, db: Session = Depends(get
     """List images in the library from database
     
     Returns:
-    - If user_id is None: all library images only
-    - If user_id is provided: library images + user's uploaded images
+    - Always: all library images + all global user images (shared by anyone)
+    - If user_id is provided: also includes that user's own uploaded images
     """
     images = []
+    seen_ids = set()
     
     # Always include shared library images
     library_images = db.query(LibraryImage).all()
     for img in library_images:
         images.append(img.to_dict())
+        seen_ids.add(img.id)
     
-    # If user_id provided, add their uploaded images
+    # Always include global user images (shared with everyone)
+    global_images = (
+        db.query(UserImage, User.name)
+        .join(User, UserImage.user_id == User.id)
+        .filter(UserImage.is_global == True)
+        .all()
+    )
+    for img, owner_name in global_images:
+        if img.id not in seen_ids:
+            d = img.to_dict()
+            d["shared_by"] = owner_name
+            images.append(d)
+            seen_ids.add(img.id)
+    
+    # If user_id provided, add their own uploaded images (including non-global)
     if user_id:
         user_images = db.query(UserImage).filter(UserImage.user_id == user_id).all()
         for img in user_images:
-            images.append(img.to_dict())
+            if img.id not in seen_ids:
+                images.append(img.to_dict())
+                seen_ids.add(img.id)
     
     # Sort by name
     images.sort(key=lambda x: x["name"].lower())
     return {"images": images}
+
+THUMBNAIL_MAX_SIZE = 200  # px (longest edge)
+
+def _generate_thumbnail(image_path: pathlib.Path, thumbnail_path: pathlib.Path) -> bool:
+    """Generate a thumbnail PNG for the given image. Returns True on success."""
+    try:
+        import numpy as np
+        from PIL import Image as PILImage
+        img = PILImage.open(image_path)
+        img_array = np.array(img)
+
+        # Normalize high bit-depth images (same logic as _serve_image_file)
+        needs_norm = img_array.dtype in [np.uint16, np.uint32, np.int16, np.int32, np.float32, np.float64]
+        if not needs_norm and img_array.dtype == np.uint8:
+            mv = img_array.max()
+            if 1 < mv < 100:
+                needs_norm = True
+        if needs_norm and img_array.size > 0:
+            mn, mx = img_array.min(), img_array.max()
+            if mx > mn:
+                img = PILImage.fromarray(((img_array - mn) / (mx - mn) * 255).astype(np.uint8))
+            else:
+                img = PILImage.fromarray(np.zeros_like(img_array, dtype=np.uint8))
+
+        if img.mode not in ('RGB', 'RGBA', 'L'):
+            if img.mode == 'LA':
+                img = img.convert('RGBA')
+            elif img.mode in ('P', 'I', 'F'):
+                img = img.convert('RGB')
+            elif len(img.getbands()) == 1:
+                img = img.convert('L')
+            else:
+                img = img.convert('RGB')
+
+        img.thumbnail((THUMBNAIL_MAX_SIZE, THUMBNAIL_MAX_SIZE), PILImage.LANCZOS)
+        img.save(thumbnail_path, format='PNG', optimize=True)
+        return True
+    except Exception as e:
+        print(f"[Thumbnail] Failed to generate for {image_path}: {e}")
+        return False
+
+
+def _get_or_create_thumbnail(image_path: pathlib.Path, thumbnail_dir: pathlib.Path, filename: str) -> pathlib.Path | None:
+    """Return the thumbnail path, generating it on demand if it doesn't exist."""
+    thumb_name = pathlib.Path(filename).stem + ".thumb.png"
+    thumb_path = thumbnail_dir / thumb_name
+    if thumb_path.exists():
+        return thumb_path
+    if _generate_thumbnail(image_path, thumb_path):
+        return thumb_path
+    return None
+
 
 def _serve_image_file(image_path: pathlib.Path, filename: str, raw: bool = False):
     """Shared helper to serve an image file, with TIFF-to-PNG conversion for browsers.
@@ -2536,25 +2693,31 @@ def _serve_image_file(image_path: pathlib.Path, filename: str, raw: bool = False
     return FileResponse(image_path)
 
 @app.get("/uploads/images/{filename:path}")
-def get_uploaded_image(filename: str, raw: bool = False):
+def get_uploaded_image(filename: str, raw: bool = False, thumbnail: bool = False):
     """Get a user-uploaded image file by filename (from PVC-backed storage)
     
     Args:
         filename: The image filename
         raw: If True, serve raw TIFF files without conversion (for script execution)
+        thumbnail: If True, serve a small thumbnail version (200px max)
     """
     image_path = USER_UPLOADS_DIR / filename
     if not image_path.exists():
         return JSONResponse({"error": "Uploaded image file not found"}, status_code=404)
+    if thumbnail:
+        thumb = _get_or_create_thumbnail(image_path, USER_THUMBNAILS_DIR, filename)
+        if thumb:
+            return FileResponse(thumb, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
     return _serve_image_file(image_path, filename, raw)
 
 @app.get("/library/images/{filename:path}")
-def get_library_image(filename: str, raw: bool = False):
+def get_library_image(filename: str, raw: bool = False, thumbnail: bool = False):
     """Get a specific library image file by filename
     
     Args:
         filename: The image filename
         raw: If True, serve raw TIFF files without conversion (for script execution)
+        thumbnail: If True, serve a small thumbnail version (200px max)
     """
     image_path = LIBRARY_IMAGES_DIR / filename
     # Also check user uploads directory for backward compatibility
@@ -2562,7 +2725,12 @@ def get_library_image(filename: str, raw: bool = False):
         image_path = USER_UPLOADS_DIR / filename
     if not image_path.exists():
         return JSONResponse({"error": "Image file not found"}, status_code=404)
-    
+    if thumbnail:
+        # Determine correct thumbnail dir based on where the original was found
+        thumb_dir = LIBRARY_THUMBNAILS_DIR if (LIBRARY_IMAGES_DIR / filename).exists() else USER_THUMBNAILS_DIR
+        thumb = _get_or_create_thumbnail(image_path, thumb_dir, filename)
+        if thumb:
+            return FileResponse(thumb, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
     return _serve_image_file(image_path, filename, raw)
 
 @app.delete("/library/images/{image_id}")
@@ -2590,6 +2758,13 @@ def delete_library_image(
         if image_path.exists():
             image_path.unlink()
         
+        # Clean up thumbnail if it exists
+        thumb_name = pathlib.Path(user_image.filename).stem + ".thumb.png"
+        for thumb_dir in [USER_THUMBNAILS_DIR, LIBRARY_THUMBNAILS_DIR]:
+            thumb_path = thumb_dir / thumb_name
+            if thumb_path.exists():
+                thumb_path.unlink()
+        
         # Delete from database
         db.delete(user_image)
         db.commit()
@@ -2606,6 +2781,47 @@ def delete_library_image(
     
     # Image not found
     return JSONResponse({"error": "Image not found"}, status_code=404)
+
+
+@app.post("/library/images/{image_id}/share")
+async def share_image_globally(
+    image_id: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """Make a user-uploaded image visible to all users."""
+    if not current_user:
+        return JSONResponse({"error": "Login required.", "require_auth": True}, status_code=403)
+    image = db.query(UserImage).filter(UserImage.id == image_id).first()
+    if not image:
+        return JSONResponse({"error": "Image not found"}, status_code=404)
+    if image.user_id != current_user.id:
+        return JSONResponse({"error": "You can only share your own images."}, status_code=403)
+    image.is_global = True
+    db.commit()
+    print(f"[API] ✓ Image '{image.name}' shared globally by {current_user.name}")
+    return {"success": True}
+
+
+@app.post("/library/images/{image_id}/unshare")
+async def unshare_image_globally(
+    image_id: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """Remove an image from the global listing (keep it as the user's own)."""
+    if not current_user:
+        return JSONResponse({"error": "Login required.", "require_auth": True}, status_code=403)
+    image = db.query(UserImage).filter(UserImage.id == image_id).first()
+    if not image:
+        return JSONResponse({"error": "Image not found"}, status_code=404)
+    if image.user_id != current_user.id:
+        return JSONResponse({"error": "You can only manage your own images."}, status_code=403)
+    image.is_global = False
+    db.commit()
+    print(f"[API] ✓ Image '{image.name}' unshared by {current_user.name}")
+    return {"success": True}
+
 
 # ============================================================================
 # User Accounts API
@@ -2634,6 +2850,32 @@ def save_users(users):
 
 class CreateUserRequest(BaseModel):
     name: str
+
+
+class AuthRegisterRequest(BaseModel):
+    username: str
+    password: str
+    email: Optional[str] = None  # Required for password reset
+
+
+class AuthLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AuthRequestResetRequest(BaseModel):
+    email: str
+
+
+class AuthResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+class AuthChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
 
 def get_default_scripts(db: Session = None):
     """Return the default/library scripts from database"""
@@ -3413,6 +3655,188 @@ def test_users_endpoint():
     """Test endpoint to verify users API is accessible"""
     return {"message": "Users API is working", "timestamp": datetime.now().isoformat()}
 
+
+# ---------- Auth: register, login (passwords stored only as hashes) ----------
+def _normalize_email(email: Optional[str]) -> Optional[str]:
+    """Normalize email for storage and lookup."""
+    if not email or not isinstance(email, str):
+        return None
+    e = email.strip().lower()
+    return e if "@" in e else None
+
+
+@app.post("/api/auth/register")
+async def auth_register(request: AuthRegisterRequest, db: Session = Depends(get_db)):
+    """Create a new account with username and password. Password is stored only as a one-way hash."""
+    print(f"[auth/register] Request received, username length={len((request.username or '').strip())}, password len(chars)={len(request.password or '')}, len(bytes)={len((request.password or '').encode('utf-8'))}")
+    if pwd_context is None or pyjwt is None:
+        print("[auth/register] Rejecting: Auth not configured (passlib or PyJWT missing)")
+        return JSONResponse({"error": "Auth is not configured."}, status_code=503)
+    username = (request.username or "").strip()
+    password = request.password or ""
+    email = _normalize_email(request.email)
+    if not username:
+        print("[auth/register] Rejecting: empty username")
+        return JSONResponse({"error": "Username is required."}, status_code=400)
+    if len(password) < 6:
+        print(f"[auth/register] Rejecting: password too short ({len(password)} chars)")
+        return JSONResponse({"error": "Password must be at least 6 characters."}, status_code=400)
+    if not email:
+        return JSONResponse({"error": "Email is required for password reset."}, status_code=400)
+    pwd_bytes = len(password.encode("utf-8"))
+    if pwd_bytes > 72:
+        print(f"[auth/register] Password {pwd_bytes} bytes > 72, truncating to 72 bytes for bcrypt")
+        password = password.encode("utf-8")[:72].decode("utf-8", errors="replace")
+    existing = db.query(User).filter(User.name == username).first()
+    if existing:
+        print(f"[auth/register] Rejecting: username already exists '{username}'")
+        return JSONResponse({"error": "A user with this username already exists."}, status_code=400)
+    existing_email = db.query(User).filter(User.email == email).first()
+    if existing_email:
+        return JSONResponse({"error": "An account with this email already exists."}, status_code=400)
+    try:
+        print(f"[auth/register] Hashing password ({len(password.encode('utf-8'))} bytes)...")
+        password_hash = pwd_context.hash(password)
+        print("[auth/register] Hash OK, creating user...")
+        new_user = User(name=username, email=email, password_hash=password_hash, created_at=datetime.utcnow())
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        print(f"[auth/register] User created id={new_user.id}, creating JWT...")
+        token = _create_jwt(new_user.id)
+        print("[auth/register] Success.")
+        return {"success": True, "user": new_user.to_dict(), "token": token}
+    except Exception as e:
+        db.rollback()
+        print(f"[auth/register] Error: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        return JSONResponse(
+            {"error": f"Registration failed: {str(e)}"},
+            status_code=500
+        )
+
+
+@app.post("/api/auth/login")
+async def auth_login(request: AuthLoginRequest, db: Session = Depends(get_db)):
+    """Log in with username and password. Returns user and JWT."""
+    if pwd_context is None or pyjwt is None:
+        return JSONResponse({"error": "Auth is not configured."}, status_code=503)
+    username = (request.username or "").strip()
+    password = request.password or ""
+    if not username or not password:
+        return JSONResponse({"error": "Username and password are required."}, status_code=400)
+    if len(password.encode("utf-8")) > 72:
+        password = password.encode("utf-8")[:72].decode("utf-8", errors="replace")
+    user = db.query(User).filter(User.name == username).first()
+    if not user or not user.password_hash:
+        return JSONResponse({"error": "Invalid username or password."}, status_code=401)
+    if not pwd_context.verify(password, user.password_hash):
+        return JSONResponse({"error": "Invalid username or password."}, status_code=401)
+    token = _create_jwt(user.id)
+    return {"success": True, "user": user.to_dict(), "token": token}
+
+
+@app.post("/api/auth/request-reset")
+async def auth_request_reset(request: AuthRequestResetRequest, db: Session = Depends(get_db)):
+    """Request a password reset. Sends email if SMTP configured. Always returns success to prevent enumeration."""
+    email = _normalize_email(request.email)
+    if not email:
+        return {"success": True, "message": "If an account exists with that email, you will receive a reset link."}
+    try:
+        from backend.email_utils import send_password_reset_email, is_email_configured
+    except ImportError:
+        from email_utils import send_password_reset_email, is_email_configured
+    from datetime import timedelta
+    import secrets as _stdlib_secrets
+    if not is_email_configured():
+        return JSONResponse({"error": "Password reset email is not configured. Contact your administrator."}, status_code=503)
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        return {"success": True, "message": "If an account exists with that email, you will receive a reset link."}
+    token_str = _stdlib_secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(hours=1)
+    reset_token = PasswordResetToken(token=token_str, user_id=user.id, expires_at=expires_at)
+    db.add(reset_token)
+    db.commit()
+    sent = send_password_reset_email(user.email, token_str)
+    if not sent:
+        db.delete(reset_token)
+        db.commit()
+        return JSONResponse({"error": "Failed to send reset email. Please try again later."}, status_code=500)
+    return {"success": True, "message": "If an account exists with that email, you will receive a reset link."}
+
+
+@app.post("/api/auth/reset-password")
+async def auth_reset_password(request: AuthResetPasswordRequest, db: Session = Depends(get_db)):
+    """Reset password using a valid reset token from the email link."""
+    if pwd_context is None:
+        return JSONResponse({"error": "Auth is not configured."}, status_code=503)
+    token_str = (request.token or "").strip()
+    new_password = request.new_password or ""
+    if not token_str:
+        return JSONResponse({"error": "Invalid or expired reset link."}, status_code=400)
+    if len(new_password) < 6:
+        return JSONResponse({"error": "Password must be at least 6 characters."}, status_code=400)
+    if len(new_password.encode("utf-8")) > 72:
+        new_password = new_password.encode("utf-8")[:72].decode("utf-8", errors="replace")
+    reset_row = db.query(PasswordResetToken).filter(PasswordResetToken.token == token_str).first()
+    if not reset_row or not reset_row.is_valid():
+        return JSONResponse({"error": "Invalid or expired reset link. Request a new one."}, status_code=400)
+    user = db.query(User).filter(User.id == reset_row.user_id).first()
+    if not user:
+        return JSONResponse({"error": "Invalid or expired reset link."}, status_code=400)
+    try:
+        user.password_hash = pwd_context.hash(new_password)
+        reset_row.used_at = datetime.utcnow()
+        db.commit()
+        return {"success": True, "message": "Password has been reset. You can now sign in."}
+    except Exception as e:
+        db.rollback()
+        print(f"[auth/reset-password] Error: {e}")
+        return JSONResponse({"error": "Failed to reset password."}, status_code=500)
+
+
+@app.post("/api/auth/change-password")
+async def auth_change_password(
+    request: AuthChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Change password for the logged-in user."""
+    if pwd_context is None:
+        return JSONResponse({"error": "Auth is not configured."}, status_code=503)
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if not user:
+        return JSONResponse({"error": "User not found."}, status_code=404)
+    if not user.password_hash:
+        return JSONResponse({"error": "Cannot change password for this account."}, status_code=400)
+    current_pwd = request.current_password or ""
+    new_pwd = request.new_password or ""
+    if len(new_pwd) < 6:
+        return JSONResponse({"error": "New password must be at least 6 characters."}, status_code=400)
+    if len(new_pwd.encode("utf-8")) > 72:
+        new_pwd = new_pwd.encode("utf-8")[:72].decode("utf-8", errors="replace")
+    if not pwd_context.verify(current_pwd, user.password_hash):
+        return JSONResponse({"error": "Current password is incorrect."}, status_code=401)
+    try:
+        user.password_hash = pwd_context.hash(new_pwd)
+        db.commit()
+        return {"success": True, "message": "Password updated successfully."}
+    except Exception as e:
+        db.rollback()
+        print(f"[auth/change-password] Error: {e}")
+        traceback.print_exc()
+        return JSONResponse({"error": "Failed to update password."}, status_code=500)
+
+
+@app.get("/api/auth/me")
+def auth_me(current_user: Optional[User] = Depends(get_current_user_optional)):
+    """Return the current user if a valid JWT is sent; otherwise null (anonymous)."""
+    if current_user is None:
+        return {"user": None}
+    return {"user": current_user.to_dict()}
+
+
 @app.get("/api/users")
 def list_users(db: Session = Depends(get_db)):
     """List all user accounts"""
@@ -3481,8 +3905,108 @@ def get_user(user_id: str, db: Session = Depends(get_db)):
         return JSONResponse({"error": "User not found"}, status_code=404)
     return {"user": user.to_dict()}
 
+class AdminVerifyRequest(BaseModel):
+    password: str = ""
+
+
+class AdminResetUserPasswordRequest(BaseModel):
+    user_id: str
+    new_password: Optional[str] = None  # If omitted, auto-generate 8-char password
+
+
+@app.get("/api/admin/users")
+def admin_search_users(
+    email: Optional[str] = None,
+    _: bool = Depends(verify_admin_password),
+    db: Session = Depends(get_db),
+):
+    """Admin-only: search users by email (partial match)."""
+    if not email or len(email.strip()) < 2:
+        return {"users": []}
+    q = (email or "").strip().lower()
+    users = db.query(User).filter(User.email.isnot(None)).all()
+    matches = [u for u in users if u.email and q in u.email.lower()]
+    return {"users": [{"id": u.id, "name": u.name, "email": u.email} for u in matches]}
+
+
+@app.post("/api/admin/verify")
+def admin_verify(body: AdminVerifyRequest):
+    """Verify admin password. Returns 200 if valid, 401 otherwise."""
+    if not ADMIN_PASSWORD:
+        raise HTTPException(status_code=503, detail="Admin not configured.")
+    if not body.password or body.password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Invalid or missing admin password.")
+    return {"ok": True}
+
+
+def _generate_password(length: int = 8) -> str:
+    """Generate a random 8-char password (letters + digits, no ambiguous chars)."""
+    import secrets as _s
+    chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
+    return "".join(_s.choice(chars) for _ in range(length))
+
+
+def _build_reset_email_body(user: User, password: str) -> str:
+    """Build copyable email body for admin to send to user."""
+    name = user.name
+    return f"""Subject: Maps Script Helper – Your password has been reset
+
+Hi {name},
+
+Your password for Maps Script Helper has been reset.
+
+Username: {user.name}
+Temporary password: {password}
+
+Please sign in and change your password when possible.
+
+— Maps Script Helper Admin"""
+
+
+@app.post("/api/admin/reset-user-password")
+def admin_reset_user_password(
+    body: AdminResetUserPasswordRequest,
+    _: bool = Depends(verify_admin_password),
+    db: Session = Depends(get_db),
+):
+    """Admin-only: reset a user's password. Auto-generates 8-char password if not provided. Returns email body to copy."""
+    if pwd_context is None:
+        return JSONResponse({"error": "Auth is not configured."}, status_code=503)
+    user_id = (body.user_id or "").strip()
+    if not user_id:
+        return JSONResponse({"error": "User ID is required."}, status_code=400)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return JSONResponse({"error": "User not found."}, status_code=404)
+    new_password = body.new_password
+    if not new_password:
+        new_password = _generate_password(8)
+    else:
+        if len(new_password) < 6:
+            return JSONResponse({"error": "Password must be at least 6 characters."}, status_code=400)
+        if len(new_password.encode("utf-8")) > 72:
+            new_password = new_password.encode("utf-8")[:72].decode("utf-8", errors="replace")
+    try:
+        user.password_hash = pwd_context.hash(new_password)
+        db.commit()
+        email_body = _build_reset_email_body(user, new_password)
+        return {
+            "success": True,
+            "message": f"Password reset for user '{user.name}'.",
+            "generated_password": new_password if not body.new_password else None,
+            "email_body": email_body,
+        }
+    except Exception as e:
+        db.rollback()
+        print(f"[Admin] reset-user-password error: {e}")
+        return JSONResponse({"error": "Failed to reset password."}, status_code=500)
+
+
 @app.post("/api/admin/reset-user-data")
-def reset_user_data(db: Session = Depends(get_db)):
+def reset_user_data(
+    _: bool = Depends(verify_admin_password),
+    db: Session = Depends(get_db),
+):
     """
     Delete all user accounts, user scripts, and user-uploaded images.
     Keeps default scripts and default library images.
@@ -3541,6 +4065,30 @@ def reset_user_data(db: Session = Depends(get_db)):
             status_code=500
         )
 
+
+@app.post("/api/admin/fresh-database")
+def fresh_database(_: bool = Depends(verify_admin_password)):
+    """
+    Deploy fresh: drop all tables, recreate them, and re-seed library scripts.
+    Use this to start with a clean database (e.g. before first real deployment).
+    """
+    try:
+        reset_database()
+        auto_seed_database()
+        print("[Admin] ✓ Fresh database ready (tables recreated, library seeded)")
+        return {
+            "success": True,
+            "message": "Database reset to fresh state. Library scripts have been re-seeded."
+        }
+    except Exception as e:
+        print(f"[Admin] ✗ fresh-database failed: {e}")
+        traceback.print_exc()
+        return JSONResponse(
+            {"error": f"Fresh database failed: {str(e)}"},
+            status_code=500
+        )
+
+
 # ============================================================================
 # Library Scripts API
 # ============================================================================
@@ -3596,31 +4144,30 @@ def get_user_scripts(user_id: Optional[str] = None, db: Session = Depends(get_db
         )
 
 @app.post("/api/user-scripts")
-async def save_user_script(script: UserScriptRequest, db: Session = Depends(get_db)):
-    """Save a new user script"""
+async def save_user_script(
+    script: UserScriptRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """Save a new user script. Requires login; anonymous users get a message to create an account."""
+    if not current_user:
+        return JSONResponse(
+            {"error": "Create an account to save scripts.", "require_auth": True},
+            status_code=403
+        )
     try:
-        print(f"[API] POST /api/user-scripts - Saving script '{script.name}' for user {script.user_id}")
-        
-        # Verify user exists
-        user = db.query(User).filter(User.id == script.user_id).first()
-        if not user:
-            return JSONResponse(
-                {"error": "User not found"},
-                status_code=404
-            )
-        
+        print(f"[API] POST /api/user-scripts - Saving script '{script.name}' for user {current_user.id}")
+        # Use authenticated user id (ignore script.user_id from body for security)
         new_script = UserScript(
-            user_id=script.user_id,
+            user_id=current_user.id,
             name=script.name,
             description=script.description or "",
             code=script.code,
             is_user_created=True
         )
-        
         db.add(new_script)
         db.commit()
         db.refresh(new_script)
-        
         print(f"[API] ✓ Script saved successfully: {new_script.id}")
         return {"success": True, "script": new_script.to_dict()}
     except Exception as e:
@@ -3629,23 +4176,31 @@ async def save_user_script(script: UserScriptRequest, db: Session = Depends(get_
         import traceback
         traceback.print_exc()
         return JSONResponse(
-            {"error": f"Failed to save script: {str(e)}"}, 
+            {"error": f"Failed to save script: {str(e)}"},
             status_code=500
         )
 
+
 @app.put("/api/user-scripts/{script_id}")
-async def update_user_script(script_id: str, script: UserScriptRequest, db: Session = Depends(get_db)):
-    """Update an existing user script"""
-    print(f"[API] PUT /api/user-scripts/{script_id} - Updating script for user {script.user_id}")
-    
+async def update_user_script(
+    script_id: str,
+    script: UserScriptRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """Update an existing user script. Requires login."""
+    if not current_user:
+        return JSONResponse(
+            {"error": "Create an account to save scripts.", "require_auth": True},
+            status_code=403
+        )
+    print(f"[API] PUT /api/user-scripts/{script_id} - Updating script for user {current_user.id}")
     try:
         existing_script = db.query(UserScript).filter(UserScript.id == script_id).first()
         if not existing_script:
             print(f"[API] ✗ Script not found: {script_id}")
             return JSONResponse({"error": "Script not found"}, status_code=404)
-        
-        # Verify user_id matches (security check)
-        if existing_script.user_id != script.user_id:
+        if existing_script.user_id != current_user.id:
             return JSONResponse(
                 {"error": "Unauthorized: Script belongs to a different user"},
                 status_code=403
@@ -3692,6 +4247,195 @@ def delete_user_script(script_id: str, db: Session = Depends(get_db)):
             {"error": f"Failed to delete script: {str(e)}"}, 
             status_code=500
         )
+
+# ============================================================================
+# Community Scripts API
+# ============================================================================
+
+@app.get("/api/community-scripts")
+def get_community_scripts(
+    user_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Get all community-shared scripts with author names and average ratings."""
+    try:
+        from sqlalchemy import func
+        scripts = (
+            db.query(UserScript, User.name)
+            .join(User, UserScript.user_id == User.id)
+            .filter(UserScript.is_community == True)
+            .order_by(desc(UserScript.updated_at))
+            .all()
+        )
+        script_ids = [s.id for s, _ in scripts]
+
+        # Batch-load average ratings
+        avg_ratings = {}
+        if script_ids:
+            rows = (
+                db.query(ScriptRating.script_id, func.avg(ScriptRating.rating), func.count(ScriptRating.rating))
+                .filter(ScriptRating.script_id.in_(script_ids))
+                .group_by(ScriptRating.script_id)
+                .all()
+            )
+            for sid, avg_val, count_val in rows:
+                avg_ratings[sid] = {"average": round(float(avg_val), 1), "count": int(count_val)}
+
+        # If a logged-in user_id is provided, also batch-load their own ratings
+        user_ratings = {}
+        if user_id and script_ids:
+            rows = (
+                db.query(ScriptRating.script_id, ScriptRating.rating)
+                .filter(ScriptRating.user_id == user_id, ScriptRating.script_id.in_(script_ids))
+                .all()
+            )
+            for sid, rating in rows:
+                user_ratings[sid] = rating
+
+        result = []
+        for script, author_name in scripts:
+            d = script.to_dict()
+            d["author_name"] = author_name
+            r = avg_ratings.get(script.id, {"average": 0, "count": 0})
+            d["rating_average"] = r["average"]
+            d["rating_count"] = r["count"]
+            d["user_rating"] = user_ratings.get(script.id, None)
+            result.append(d)
+        return {"scripts": result}
+    except Exception as e:
+        print(f"[API] Error loading community scripts: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": f"Failed to load community scripts: {str(e)}"}, status_code=500)
+
+
+class PublishCommunityRequest(BaseModel):
+    image_id: str        # ID of the image to associate
+    image_url: str       # URL of the image
+    image_name: str      # Display name of the image
+
+
+@app.post("/api/user-scripts/{script_id}/publish")
+async def publish_to_community(
+    script_id: str,
+    body: PublishCommunityRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """Publish a user script to the community. Requires an associated image."""
+    if not current_user:
+        return JSONResponse({"error": "Login required to share scripts.", "require_auth": True}, status_code=403)
+    try:
+        script = db.query(UserScript).filter(UserScript.id == script_id).first()
+        if not script:
+            return JSONResponse({"error": "Script not found"}, status_code=404)
+        if script.user_id != current_user.id:
+            return JSONResponse({"error": "You can only share your own scripts."}, status_code=403)
+
+        script.is_community = True
+        script.community_image_id = body.image_id
+        script.community_image_url = body.image_url
+        script.community_image_name = body.image_name
+        script.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(script)
+
+        d = script.to_dict()
+        d["author_name"] = current_user.name
+        print(f"[API] ✓ Script '{script.name}' published to community by {current_user.name}")
+        return {"success": True, "script": d}
+    except Exception as e:
+        db.rollback()
+        print(f"[API] ✗ Failed to publish script: {e}")
+        return JSONResponse({"error": f"Failed to publish: {str(e)}"}, status_code=500)
+
+
+@app.post("/api/user-scripts/{script_id}/unpublish")
+async def unpublish_from_community(
+    script_id: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """Remove a script from the community listing."""
+    if not current_user:
+        return JSONResponse({"error": "Login required.", "require_auth": True}, status_code=403)
+    try:
+        script = db.query(UserScript).filter(UserScript.id == script_id).first()
+        if not script:
+            return JSONResponse({"error": "Script not found"}, status_code=404)
+        if script.user_id != current_user.id:
+            return JSONResponse({"error": "You can only manage your own scripts."}, status_code=403)
+
+        script.is_community = False
+        script.updated_at = datetime.utcnow()
+        db.commit()
+
+        print(f"[API] ✓ Script '{script.name}' unpublished from community")
+        return {"success": True}
+    except Exception as e:
+        db.rollback()
+        print(f"[API] ✗ Failed to unpublish script: {e}")
+        return JSONResponse({"error": f"Failed to unpublish: {str(e)}"}, status_code=500)
+
+
+class RateScriptRequest(BaseModel):
+    rating: int  # 1-5
+
+
+@app.post("/api/community-scripts/{script_id}/rate")
+async def rate_community_script(
+    script_id: str,
+    body: RateScriptRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """Rate a community script (1-5 stars). One rating per user; updates if already rated."""
+    if not current_user:
+        return JSONResponse({"error": "Login required to rate scripts.", "require_auth": True}, status_code=403)
+    if body.rating < 1 or body.rating > 5:
+        return JSONResponse({"error": "Rating must be between 1 and 5."}, status_code=400)
+    try:
+        # Check script exists and is community
+        script = db.query(UserScript).filter(UserScript.id == script_id, UserScript.is_community == True).first()
+        if not script:
+            return JSONResponse({"error": "Community script not found."}, status_code=404)
+
+        # Upsert: find existing rating or create new
+        existing = db.query(ScriptRating).filter(
+            ScriptRating.script_id == script_id,
+            ScriptRating.user_id == current_user.id
+        ).first()
+        if existing:
+            existing.rating = body.rating
+            existing.updated_at = datetime.utcnow()
+        else:
+            new_rating = ScriptRating(
+                script_id=script_id,
+                user_id=current_user.id,
+                rating=body.rating,
+            )
+            db.add(new_rating)
+        db.commit()
+
+        # Return updated average
+        from sqlalchemy import func
+        row = db.query(func.avg(ScriptRating.rating), func.count(ScriptRating.rating)).filter(
+            ScriptRating.script_id == script_id
+        ).first()
+        avg_val = round(float(row[0]), 1) if row[0] else 0
+        count_val = int(row[1]) if row[1] else 0
+
+        return {
+            "success": True,
+            "user_rating": body.rating,
+            "rating_average": avg_val,
+            "rating_count": count_val,
+        }
+    except Exception as e:
+        db.rollback()
+        print(f"[API] ✗ Failed to rate script: {e}")
+        return JSONResponse({"error": f"Failed to rate: {str(e)}"}, status_code=500)
+
 
 # ============================================================================
 # Script Logging and Analysis API
@@ -4112,6 +4856,4 @@ async def add_no_cache_headers(request, call_next):
     return response
 
 # Serve the frontend as static content
-# Note: Static mounts must come AFTER API routes to avoid intercepting them
-# Outputs are served via the custom endpoint above for TIFF conversion support
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

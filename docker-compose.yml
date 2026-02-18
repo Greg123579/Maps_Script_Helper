@@ -28,6 +28,13 @@ services:
       - HOST_PROJECT_DIR=${PWD}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - APP_BASE_URL=${APP_BASE_URL:-}
       - KUBERNETES_NAMESPACE=maps-data-analysis
       - RUNNER_IMAGE=py-exec:latest
       - SCRIPT_TIMEOUT=600

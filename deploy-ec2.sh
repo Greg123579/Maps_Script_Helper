@@ -189,6 +189,9 @@ OPENAI_API_KEY=
 # Host project directory (used for Docker-in-Docker volume mounts)
 # This should match the deploy directory + /data
 HOST_PROJECT_DIR=/opt/maps-helper/data
+
+# JWT secret for login tokens (set a long random string in production)
+JWT_SECRET=
 ENVEOF
     chmod 600 "${ENV_FILE}"
     log_warn "Created ${ENV_FILE} - edit it to add your API keys"

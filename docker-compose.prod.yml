@@ -42,9 +42,19 @@ services:
       - HOST_PROJECT_DIR=/opt/maps-helper/data
       # Database location (inside the persistent data volume)
       - DATABASE_PATH=/app/data/maps_helper.db
-      # API keys (loaded from .env file or set inline)
+      # API keys and auth (from .env)
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - JWT_SECRET=${JWT_SECRET:-}
+      # Admin panel at /admin.html (set ADMIN_PASSWORD to enable)
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      # Password reset email (optional; set all to enable)
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - APP_BASE_URL=${APP_BASE_URL:-}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

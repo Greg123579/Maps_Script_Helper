@@ -1,4 +1,4 @@
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useCallback } = React;
 
 // MAPS AI Scripting Assistant Logo Component
 const MapsAILogo = ({ size = 120, showText = true }) => {
@@ -271,7 +271,7 @@ const LibrarySelectionModal = ({ isOpen, onClose, onSelect, libraryImages }) => 
                         }}
                       >
                         <div className="library-selection-image-wrapper">
-                          <img src={image.url} alt={image.name} className="library-selection-image" />
+                          <img src={image.thumbnail_url || image.url} alt={image.name} className="library-selection-image" />
                           <div className="library-selection-type-badge" style={{
                             backgroundColor: image.type === 'SEM'
                               ? '#1976d2'
@@ -324,7 +324,7 @@ const LibrarySelectionModal = ({ isOpen, onClose, onSelect, libraryImages }) => 
                         }}
                       >
                         <div className="library-selection-image-wrapper">
-                          <img src={image.url} alt={image.name} className="library-selection-image" />
+                          <img src={image.thumbnail_url || image.url} alt={image.name} className="library-selection-image" />
                           <div className="library-selection-type-badge" style={{
                             backgroundColor: image.type === 'SEM'
                               ? '#1976d2'
@@ -429,8 +429,8 @@ const UploadModal = ({ isOpen, onClose, onUpload, currentUser }) => {
       return;
     }
 
-    if (!currentUser) {
-      alert('Please log in to upload images');
+    if (!currentUser || currentUser.isAnonymous || !currentUser.id) {
+      alert('Create an account to upload images.');
       return;
     }
 
@@ -441,13 +441,23 @@ const UploadModal = ({ isOpen, onClose, onUpload, currentUser }) => {
     formData.append('description', description);
     formData.append('image_type', imageType);
     formData.append('user_id', currentUser.id);
+    const token = localStorage.getItem('authToken');
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
 
     try {
       const response = await fetch('/library/upload', {
         method: 'POST',
+        headers,
         body: formData
       });
 
+      if (response.status === 403) {
+        const data = await response.json().catch(() => ({}));
+        if (data.require_auth) {
+          throw new Error('Create an account to upload images.');
+        }
+      }
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.error || 'Upload failed');
@@ -622,7 +632,7 @@ const UploadModal = ({ isOpen, onClose, onUpload, currentUser }) => {
 };
 
 // Library Image Card Component
-const LibraryImageCard = ({ image, isSelected, onSelect, onDelete, onView }) => {
+const LibraryImageCard = ({ image, isSelected, onSelect, onDelete, onView, onToggleGlobal, currentUserId }) => {
   const getTypeColor = (type) => {
     const colors = {
       'SEM': '#1976d2',
@@ -634,6 +644,7 @@ const LibraryImageCard = ({ image, isSelected, onSelect, onDelete, onView }) => 
   };
 
   const isUserImage = image.user_id != null;
+  const isOwnImage = isUserImage && image.user_id === currentUserId;
 
   return (
     <div
@@ -641,7 +652,7 @@ const LibraryImageCard = ({ image, isSelected, onSelect, onDelete, onView }) => 
       onClick={() => onSelect(image)}
     >
       <div className="library-card-image-wrapper">
-        <img src={image.url} alt={image.name} className="library-card-image" />
+        <img src={image.thumbnail_url || image.url} alt={image.name} className="library-card-image" />
         {isSelected && (
           <div className="library-card-overlay">
             <span className="material-symbols-outlined">check_circle</span>
@@ -650,6 +661,11 @@ const LibraryImageCard = ({ image, isSelected, onSelect, onDelete, onView }) => 
         {image.type && (
           <div className="library-card-type-badge" style={{ backgroundColor: getTypeColor(image.type) }}>
             {image.type}
+          </div>
+        )}
+        {image.is_global && (
+          <div className="library-card-global-badge" title={image.shared_by ? `Shared by ${image.shared_by}` : 'Shared with everyone'}>
+            <span className="material-symbols-outlined" style={{fontSize: '12px'}}>public</span>
           </div>
         )}
         <button
@@ -665,22 +681,40 @@ const LibraryImageCard = ({ image, isSelected, onSelect, onDelete, onView }) => 
       </div>
       <div className="library-card-content">
         <h4 className="library-card-title">{image.name}</h4>
+        {image.shared_by && !isOwnImage && (
+          <p className="library-card-shared-by">
+            <span className="material-symbols-outlined" style={{fontSize: '12px'}}>person</span>
+            {image.shared_by}
+          </p>
+        )}
         {image.description && (
           <p className="library-card-description">{image.description}</p>
         )}
       </div>
-      {isUserImage && (
-        <button
-          className="library-card-delete"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (window.confirm(`Delete "${image.name}"?`)) {
-              onDelete(image.id);
-            }
-          }}
-        >
-          <span className="material-symbols-outlined">delete</span>
-        </button>
+      {isOwnImage && (
+        <div className="library-card-actions">
+          <button
+            className={`library-card-share ${image.is_global ? 'shared' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleGlobal(image);
+            }}
+            title={image.is_global ? 'Remove from shared images' : 'Share with everyone'}
+          >
+            <span className="material-symbols-outlined">{image.is_global ? 'visibility_off' : 'public'}</span>
+          </button>
+          <button
+            className="library-card-delete"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (window.confirm(`Delete "${image.name}"?`)) {
+                onDelete(image.id);
+              }
+            }}
+          >
+            <span className="material-symbols-outlined">delete</span>
+          </button>
+        </div>
       )}
     </div>
   );
@@ -735,47 +769,47 @@ const ImageViewer = ({ src, alt, title, isDark = false }) => {
   const imageRef = useRef(null);
   const isInitialLoadRef = useRef(true);
 
-  // Calculate fit-to-view scale only on initial load
-  useEffect(() => {
-    const calculateFitScale = () => {
-      if (imageRef.current && containerRef.current && isInitialLoadRef.current) {
-        const container = containerRef.current.getBoundingClientRect();
-        const image = imageRef.current;
-        
-        // Get natural image dimensions
-        const imgWidth = image.naturalWidth;
-        const imgHeight = image.naturalHeight;
-        
-        if (imgWidth === 0 || imgHeight === 0) return; // Image not loaded yet
-        
-        // Get container dimensions (with minimal padding)
-        const containerWidth = container.width - 20;
-        const containerHeight = container.height - 20;
-        
-        // Calculate scale to fit (allow scaling up or down)
-        const scaleX = containerWidth / imgWidth;
-        const scaleY = containerHeight / imgHeight;
-        const newFitScale = Math.min(scaleX, scaleY); // Use the smaller scale to fit
-        
-        setFitScale(newFitScale);
-        setScale(newFitScale);
-        setPosition({ x: 0, y: 0 });
-        
-        // Mark that initial load is complete
-        isInitialLoadRef.current = false;
-      }
-    };
+  const updateFitScale = useCallback(() => {
+    if (!imageRef.current || !containerRef.current) return;
+    const container = containerRef.current.getBoundingClientRect();
+    const imgWidth = imageRef.current.naturalWidth;
+    const imgHeight = imageRef.current.naturalHeight;
+    if (imgWidth === 0 || imgHeight === 0) return;
+    const containerWidth = container.width - 20;
+    const containerHeight = container.height - 20;
+    const newFitScale = Math.min(containerWidth / imgWidth, containerHeight / imgHeight);
+    setFitScale(newFitScale);
+    if (isInitialLoadRef.current) {
+      setScale(newFitScale);
+      setPosition({ x: 0, y: 0 });
+      isInitialLoadRef.current = false;
+    }
+  }, []);
 
+  // Calculate fit scale on load; preserve zoom/position when swapping images
+  useEffect(() => {
     const img = imageRef.current;
+    const onLoad = () => {
+      if (img && img.complete && img.naturalWidth > 0) updateFitScale();
+    };
     if (img) {
       if (img.complete && img.naturalWidth > 0) {
-        calculateFitScale();
+        onLoad();
       } else {
-        img.addEventListener('load', calculateFitScale);
-        return () => img.removeEventListener('load', calculateFitScale);
+        img.addEventListener('load', onLoad);
       }
     }
-  }, [src]);
+    const container = containerRef.current;
+    if (!container) return () => img?.removeEventListener('load', onLoad);
+    const ro = new ResizeObserver(() => {
+      if (img?.complete && img.naturalWidth > 0) updateFitScale();
+    });
+    ro.observe(container);
+    return () => {
+      img?.removeEventListener('load', onLoad);
+      ro.disconnect();
+    };
+  }, [src, updateFitScale]);
 
   const handleZoomIn = () => {
     setScale(prev => Math.min(prev + 0.25, 5));
@@ -797,19 +831,17 @@ const ImageViewer = ({ src, alt, title, isDark = false }) => {
   };
 
   const handleMouseDown = (e) => {
-    if (scale > 1) {
-      e.preventDefault();
-      setIsDragging(true);
-      setDragStart({
-        x: e.clientX - position.x,
-        y: e.clientY - position.y
-      });
-    }
+    e.preventDefault();
+    setIsDragging(true);
+    setDragStart({
+      x: e.clientX - position.x,
+      y: e.clientY - position.y
+    });
   };
 
   useEffect(() => {
     const handleMouseMove = (e) => {
-      if (isDragging && scale > 1) {
+      if (isDragging) {
         setPosition({
           x: e.clientX - dragStart.x,
           y: e.clientY - dragStart.y
@@ -854,7 +886,7 @@ const ImageViewer = ({ src, alt, title, isDark = false }) => {
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         style={{ 
-          cursor: scale > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
+          cursor: isDragging ? 'grabbing' : 'grab',
           background: isDark ? '#1a1f2e' : '#f5f5f5'
         }}
       >
@@ -875,83 +907,145 @@ const ImageViewer = ({ src, alt, title, isDark = false }) => {
   );
 };
 
-// Login Screen Component
+// Login Screen: Guest, Login, or Register (passwords are hashed on server; never stored in plain text)
+const GUEST_USER = { id: null, name: 'Guest', isAnonymous: true };
+
 const LoginScreen = ({ onLogin }) => {
-  const [users, setUsers] = useState([]);
-  const [newUserName, setNewUserName] = useState('');
-  const [isCreating, setIsCreating] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [tab, setTab] = useState('login'); // 'login' | 'register'
+  const [view, setView] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('reset_token') ? 'reset' : 'main';
+  }); // 'main' | 'forgot' | 'reset'
+  const [resetToken, setResetToken] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('reset_token') || '';
+  });
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState('');
 
-  useEffect(() => {
-    loadUsers();
-  }, []);
+  const handleGuest = () => {
+    localStorage.setItem('currentUser', JSON.stringify(GUEST_USER));
+    onLogin(GUEST_USER);
+  };
 
-  const loadUsers = async () => {
+  const handleLogin = async () => {
+    setError('');
+    if (!username.trim() || !password) {
+      setError('Username and password are required.');
+      return;
+    }
+    setLoading(true);
     try {
-      const response = await fetch('/api/users');
-      const data = await response.json();
-      setUsers(data.users || []);
-    } catch (error) {
-      console.error('Failed to load users:', error);
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success && data.user && data.token) {
+        localStorage.setItem('authToken', data.token);
+        localStorage.setItem('currentUser', JSON.stringify(data.user));
+        onLogin(data.user);
+      } else {
+        setError(data.error || 'Login failed.');
+      }
+    } catch (e) {
+      setError(e.message || 'Network error.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSelectUser = (user) => {
-    localStorage.setItem('currentUser', JSON.stringify(user));
-    onLogin(user);
-  };
-
-  const handleCreateUser = async () => {
-    if (!newUserName.trim()) {
-      alert('Please enter a name');
+  const handleRegister = async () => {
+    setError('');
+    if (!username.trim()) {
+      setError('Username is required.');
       return;
     }
-
-    setIsCreating(true);
+    const em = (email || '').trim();
+    if (!em || !em.includes('@')) {
+      setError('A valid email is required for password reset.');
+      return;
+    }
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+    setLoading(true);
     try {
-      const response = await fetch('/api/users', {
+      const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newUserName.trim() })
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+          email: em,
+        })
       });
-
-      const contentType = response.headers.get('content-type');
-      let data;
-      
-      if (contentType && contentType.includes('application/json')) {
-        data = await response.json();
-      } else {
-        const text = await response.text();
-        console.error('Non-JSON response:', text);
-        alert(`Failed to create user: ${response.status} ${response.statusText}\n\n${text.substring(0, 200)}`);
-        setIsCreating(false);
-        return;
-      }
-
-      if (response.ok && data.success) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success && data.user && data.token) {
+        localStorage.setItem('authToken', data.token);
         localStorage.setItem('currentUser', JSON.stringify(data.user));
         onLogin(data.user);
-        setNewUserName('');
       } else {
-        console.error('Error response:', data);
-        alert(data.error || 'Failed to create user');
+        const msg = data.error || (data.detail && (Array.isArray(data.detail) ? data.detail[0]?.msg : data.detail)) || `Registration failed (${res.status}).`;
+        setError(typeof msg === 'string' ? msg : JSON.stringify(msg));
       }
-    } catch (error) {
-      console.error('Failed to create user:', error);
-      const errorMsg = error && error.message ? error.message : String(error || 'Network error');
-      alert(`Failed to create user: ${errorMsg}`);
+    } catch (e) {
+      setError(e.message || 'Network error.');
     } finally {
-      setIsCreating(false);
+      setLoading(false);
     }
   };
 
-  // Filter users based on search query
-  const filteredUsers = users.filter(user => 
-    user.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const handleResetSubmit = async () => {
+    setError('');
+    if (newPassword.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: resetToken, new_password: newPassword })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setResetSuccess(data.message || 'Password reset. You can now sign in.');
+        window.history.replaceState({}, document.title, window.location.pathname);
+        setResetToken('');
+        setTimeout(() => { setView('main'); setResetSuccess(''); setNewPassword(''); setConfirmPassword(''); }, 3000);
+      } else {
+        setError(data.error || 'Reset failed. The link may have expired.');
+      }
+    } catch (e) {
+      setError(e.message || 'Network error.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const inputStyle = {
+    width: '100%',
+    padding: '12px 16px',
+    border: '2px solid #e0e0e0',
+    borderRadius: '8px',
+    fontSize: '16px',
+    outline: 'none',
+    boxSizing: 'border-box'
+  };
 
   return (
     <div style={{
@@ -959,351 +1053,211 @@ const LoginScreen = ({ onLogin }) => {
       justifyContent: 'center',
       alignItems: 'center',
       minHeight: '100vh',
-      background: `
-        radial-gradient(ellipse at 70% 50%, rgba(0, 191, 255, 0.4) 0%, transparent 50%),
-        radial-gradient(ellipse at 30% 70%, rgba(72, 209, 204, 0.3) 0%, transparent 50%),
-        radial-gradient(ellipse at 50% 30%, rgba(30, 144, 255, 0.3) 0%, transparent 50%),
-        linear-gradient(180deg, #001a33 0%, #003d5c 30%, #00334d 70%, #001f33 100%)
-      `,
-      backgroundSize: '100% 100%, 100% 100%, 100% 100%, 100% 100%',
-      animation: 'auroraFlow 20s ease-in-out infinite',
-      padding: '20px',
-      position: 'relative',
-      overflow: 'hidden'
+      background: 'linear-gradient(180deg, #001a33 0%, #003d5c 30%, #00334d 70%, #001f33 100%)',
+      padding: '20px'
     }}>
       <div className="login-container" style={{
         background: '#f0f4f8',
         borderRadius: '16px',
         padding: '40px',
-        maxWidth: '1000px',
+        maxWidth: '420px',
         width: '100%',
-        maxHeight: '90vh',
-        overflowY: 'auto',
-        boxShadow: '0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(0, 191, 255, 0.2)',
-        display: 'flex',
-        gap: '40px'
+        boxShadow: '0 20px 60px rgba(0,0,0,0.5)'
       }}>
-        {/* Left Column: Logo, Description, Create Account */}
-        <div style={{
-          flex: '1',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center'
-        }}>
-          <div style={{ textAlign: 'center', marginBottom: '40px' }}>
-            <div style={{ marginBottom: '24px' }}>
-              <MapsAILogo size={180} showText={true} />
-            </div>
-            <h1 style={{ margin: '0 0 8px 0', fontSize: '32px', fontWeight: '700', color: '#333', letterSpacing: '-0.5px' }}>
-              Maps Script Helper
-            </h1>
-            <p style={{ margin: '0 0 16px 0', color: '#00BFFF', fontSize: '14px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              AI-Powered Python Script Generator
-            </p>
-            <p style={{ margin: '0', color: '#666', fontSize: '16px', lineHeight: '1.6' }}>
-              Select your account or create a new one to get started with AI-powered Python scripting for MAPS.
-            </p>
-          </div>
+        <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+          <MapsAILogo size={120} showText={true} />
+          <h1 style={{ margin: '12px 0 4px', fontSize: '24px', fontWeight: '700', color: '#333' }}>
+            Maps Script Helper
+          </h1>
+          <p style={{ margin: 0, color: '#666', fontSize: '14px' }}>
+            Sign in to save scripts, or continue as guest to try the app.
+          </p>
+        </div>
 
-          {/* Create New Account Section */}
-          <div style={{
-            padding: '24px',
-            background: 'white',
-            borderRadius: '12px',
-            border: '2px solid #e0e0e0'
-          }}>
-            <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: '#333' }}>
-              Create New Account
-            </h2>
+        <button
+          onClick={handleGuest}
+          style={{
+            width: '100%',
+            padding: '14px',
+            marginBottom: '24px',
+            background: '#667eea',
+            color: 'white',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '16px',
+            fontWeight: '600',
+            cursor: 'pointer'
+          }}
+        >
+          Continue as guest
+        </button>
+
+        {view === 'forgot' && (
+          <div style={{ marginBottom: '16px' }}>
+            <h2 style={{ margin: '0 0 16px', fontSize: '16px', fontWeight: '600', color: '#333' }}>Forgot password</h2>
+            <p style={{ margin: '0 0 16px', fontSize: '14px', color: '#666', lineHeight: 1.5 }}>
+              To reset your password, contact{' '}
+              <a href="mailto:greg.clark2@thermofisher.com" style={{ color: '#3b82f6', fontWeight: 600 }}>
+                greg.clark2@thermofisher.com
+              </a>
+            </p>
+            <button
+              type="button"
+              onClick={() => { setView('main'); setError(''); }}
+              style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '14px', textDecoration: 'underline', padding: 0 }}
+            >
+              Back to sign in
+            </button>
+          </div>
+        )}
+
+        {view === 'reset' && (
+          <div style={{ marginBottom: '16px' }}>
+            <h2 style={{ margin: '0 0 16px', fontSize: '16px', fontWeight: '600', color: '#333' }}>Set new password</h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <input
-                type="text"
-                value={newUserName}
-                onChange={(e) => setNewUserName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    handleCreateUser();
-                  }
-                }}
-                placeholder="Enter your name"
-                style={{
-                  width: '100%',
-                  padding: '12px 16px',
-                  border: '2px solid #e0e0e0',
-                  borderRadius: '8px',
-                  fontSize: '16px',
-                  outline: 'none',
-                  boxSizing: 'border-box',
-                  transition: 'border-color 0.2s'
-                }}
-                onFocus={(e) => {
-                  e.currentTarget.borderColor = '#667eea';
-                }}
-                onBlur={(e) => {
-                  e.currentTarget.borderColor = '#e0e0e0';
-                }}
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="New password (min 6 characters)"
+                style={inputStyle}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleResetSubmit(); }}
               />
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Confirm password"
+                style={inputStyle}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleResetSubmit(); }}
+              />
+              {error && <p style={{ margin: 0, color: '#c00', fontSize: '14px' }}>{error}</p>}
+              {resetSuccess && <p style={{ margin: 0, color: '#0a0', fontSize: '14px' }}>{resetSuccess}</p>}
               <button
-                onClick={handleCreateUser}
-                disabled={isCreating || !newUserName.trim()}
-                style={{
-                  width: '100%',
-                  padding: '12px 24px',
-                  background: isCreating || !newUserName.trim() ? '#ccc' : '#667eea',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  fontSize: '16px',
-                  fontWeight: '600',
-                  cursor: isCreating || !newUserName.trim() ? 'not-allowed' : 'pointer',
-                  transition: 'background 0.2s'
-                }}
+                onClick={handleResetSubmit}
+                disabled={loading}
+                style={{ width: '100%', padding: '12px', background: loading ? '#999' : '#333', color: 'white', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: '600', cursor: loading ? 'not-allowed' : 'pointer' }}
               >
-                {isCreating ? 'Creating...' : 'Create Account'}
+                {loading ? 'Resetting...' : 'Reset password'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setView('main'); setError(''); setResetSuccess(''); window.history.replaceState({}, document.title, window.location.pathname); }}
+                style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '14px', textDecoration: 'underline' }}
+              >
+                Back to sign in
               </button>
             </div>
           </div>
+        )}
+
+        {view === 'main' && (
+        <div style={{ marginBottom: '16px' }}>
+          <h2 style={{ margin: '0 0 16px', fontSize: '16px', fontWeight: '600', color: '#333' }}>
+            {tab === 'login' ? 'Sign in' : 'Create account'}
+          </h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Username"
+              style={inputStyle}
+            />
+            {tab === 'register' && (
+              <>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Email (required for password reset)"
+                  style={inputStyle}
+                />
+              </>
+            )}
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={tab === 'login' ? 'Password' : 'Password (min 6 characters)'}
+              style={inputStyle}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') tab === 'login' ? handleLogin() : handleRegister();
+              }}
+            />
+            {tab === 'login' && (
+              <button
+                type="button"
+                onClick={() => { setView('forgot'); setError(''); setEmail(''); }}
+                style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '13px', padding: 0, alignSelf: 'flex-start', textDecoration: 'underline' }}
+              >
+                Forgot password?
+              </button>
+            )}
+            {error && <p style={{ margin: 0, color: '#c00', fontSize: '14px' }}>{error}</p>}
+            <button
+              onClick={tab === 'login' ? handleLogin : handleRegister}
+              disabled={loading}
+              style={{
+                width: '100%',
+                padding: '12px',
+                background: loading ? '#999' : '#333',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '16px',
+                fontWeight: '600',
+                cursor: loading ? 'not-allowed' : 'pointer'
+              }}
+            >
+              {loading ? 'Please wait...' : (tab === 'login' ? 'Sign in' : 'Create account')}
+            </button>
+          </div>
         </div>
+        )}
 
-        {/* Right Column: User List */}
-        <div style={{
-          flex: '1',
-          display: 'flex',
-          flexDirection: 'column'
-        }}>
-          {loading ? (
-            <div style={{ textAlign: 'center', padding: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: '48px', color: '#999', animation: 'spin 1s linear infinite' }}>
-                refresh
-              </span>
-            </div>
+        {view === 'main' && (
+        <p style={{ margin: 0, textAlign: 'center', fontSize: '14px', color: '#666' }}>
+          {tab === 'login' ? (
+            <>Don&apos;t have an account?{' '}
+              <button
+                type="button"
+                onClick={() => { setTab('register'); setError(''); }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#3b82f6',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  padding: 0,
+                  textDecoration: 'underline'
+                }}
+              >
+                Create one
+              </button>
+            </>
           ) : (
-            <>
-              {users.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <h2 style={{ fontSize: '18px', fontWeight: '600', margin: 0, color: '#333' }}>
-                      Select Account
-                    </h2>
-                    <span style={{ fontSize: '14px', color: '#666' }}>
-                      {filteredUsers.length} {filteredUsers.length === 1 ? 'user' : 'users'}
-                      {searchQuery && ` (of ${users.length})`}
-                    </span>
-                  </div>
-                  
-                  {/* Search Input */}
-                  <div style={{ marginBottom: '12px' }}>
-                    <div style={{ position: 'relative' }}>
-                      <span className="material-symbols-outlined" style={{
-                        position: 'absolute',
-                        left: '12px',
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        fontSize: '20px',
-                        color: '#999',
-                        pointerEvents: 'none'
-                      }}>
-                        search
-                      </span>
-                      <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search users..."
-                        style={{
-                          width: '100%',
-                          padding: '10px 12px 10px 40px',
-                          border: '2px solid #e0e0e0',
-                          borderRadius: '8px',
-                          fontSize: '14px',
-                          outline: 'none',
-                          transition: 'border-color 0.2s',
-                          boxSizing: 'border-box'
-                        }}
-                        onFocus={(e) => {
-                          e.currentTarget.borderColor = '#667eea';
-                        }}
-                        onBlur={(e) => {
-                          e.currentTarget.borderColor = '#e0e0e0';
-                        }}
-                      />
-                      {searchQuery && (
-                        <button
-                          onClick={() => setSearchQuery('')}
-                          style={{
-                            position: 'absolute',
-                            right: '8px',
-                            top: '50%',
-                            transform: 'translateY(-50%)',
-                            background: 'transparent',
-                            border: 'none',
-                            cursor: 'pointer',
-                            padding: '4px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderRadius: '4px'
-                          }}
-                          onMouseOver={(e) => {
-                            e.currentTarget.background = '#f0f0f0';
-                          }}
-                          onMouseOut={(e) => {
-                            e.currentTarget.background = 'transparent';
-                          }}
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: '18px', color: '#999' }}>
-                            close
-                          </span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Scrollable User List */}
-                  {filteredUsers.length > 0 ? (
-                    <div 
-                      className="login-user-list"
-                      style={{
-                        flex: 1,
-                        minHeight: '400px',
-                        maxHeight: '500px',
-                        overflowY: 'auto',
-                        overflowX: 'hidden',
-                        border: '2px solid #e0e0e0',
-                        borderRadius: '8px',
-                        padding: '8px',
-                        background: 'white'
-                      }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        {filteredUsers.map((user) => (
-                          <button
-                            key={user.id}
-                            onClick={() => handleSelectUser(user)}
-                            style={{
-                              padding: '12px 16px',
-                              border: '2px solid #e0e0e0',
-                              borderRadius: '6px',
-                              background: 'white',
-                              cursor: 'pointer',
-                              textAlign: 'left',
-                              fontSize: '15px',
-                              fontWeight: '500',
-                              color: '#333',
-                              transition: 'all 0.2s',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '12px',
-                              width: '100%'
-                            }}
-                            onMouseOver={(e) => {
-                              e.currentTarget.style.borderColor = '#667eea';
-                              e.currentTarget.style.background = '#f5f7ff';
-                            }}
-                            onMouseOut={(e) => {
-                              e.currentTarget.style.borderColor = '#e0e0e0';
-                              e.currentTarget.style.background = 'white';
-                            }}
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: '22px', color: '#667eea', flexShrink: 0 }}>
-                              person
-                            </span>
-                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {user.name}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{
-                      flex: 1,
-                      minHeight: '400px',
-                      padding: '32px',
-                      textAlign: 'center',
-                      border: '2px solid #e0e0e0',
-                      borderRadius: '8px',
-                      background: 'white',
-                      color: '#999',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}>
-                      <span className="material-symbols-outlined" style={{ fontSize: '48px', marginBottom: '8px' }}>
-                        person_off
-                      </span>
-                      <p style={{ margin: 0, fontSize: '14px' }}>
-                        No users found matching "{searchQuery}"
-                      </p>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div style={{
-                  padding: '40px',
-                  textAlign: 'center',
-                  color: '#666',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flex: 1
-                }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: '64px', marginBottom: '16px', color: '#999' }}>
-                    group
-                  </span>
-                  <p style={{ margin: 0, fontSize: '16px' }}>
-                    No existing users. Create your account on the left to get started!
-                  </p>
-                </div>
-              )}
+            <>Already have an account?{' '}
+              <button
+                type="button"
+                onClick={() => { setTab('login'); setError(''); }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#3b82f6',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  padding: 0,
+                  textDecoration: 'underline'
+                }}
+              >
+                Sign in
+              </button>
             </>
           )}
-        </div>
+        </p>
+        )}
       </div>
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        @keyframes auroraFlow {
-          0% {
-            background: 
-              radial-gradient(ellipse at 70% 50%, rgba(0, 191, 255, 0.4) 0%, transparent 50%),
-              radial-gradient(ellipse at 30% 70%, rgba(72, 209, 204, 0.3) 0%, transparent 50%),
-              radial-gradient(ellipse at 50% 30%, rgba(30, 144, 255, 0.3) 0%, transparent 50%),
-              linear-gradient(180deg, #001a33 0%, #003d5c 30%, #00334d 70%, #001f33 100%);
-          }
-          25% {
-            background: 
-              radial-gradient(ellipse at 60% 60%, rgba(0, 191, 255, 0.5) 0%, transparent 50%),
-              radial-gradient(ellipse at 40% 50%, rgba(72, 209, 204, 0.4) 0%, transparent 50%),
-              radial-gradient(ellipse at 70% 40%, rgba(30, 144, 255, 0.3) 0%, transparent 50%),
-              linear-gradient(180deg, #001a33 0%, #003d5c 30%, #00334d 70%, #001f33 100%);
-          }
-          50% {
-            background: 
-              radial-gradient(ellipse at 50% 70%, rgba(0, 191, 255, 0.4) 0%, transparent 50%),
-              radial-gradient(ellipse at 60% 40%, rgba(72, 209, 204, 0.35) 0%, transparent 50%),
-              radial-gradient(ellipse at 40% 60%, rgba(30, 144, 255, 0.3) 0%, transparent 50%),
-              linear-gradient(180deg, #001a33 0%, #003d5c 30%, #00334d 70%, #001f33 100%);
-          }
-          75% {
-            background: 
-              radial-gradient(ellipse at 40% 50%, rgba(0, 191, 255, 0.45) 0%, transparent 50%),
-              radial-gradient(ellipse at 70% 60%, rgba(72, 209, 204, 0.3) 0%, transparent 50%),
-              radial-gradient(ellipse at 50% 50%, rgba(30, 144, 255, 0.35) 0%, transparent 50%),
-              linear-gradient(180deg, #001a33 0%, #003d5c 30%, #00334d 70%, #001f33 100%);
-          }
-          100% {
-            background: 
-              radial-gradient(ellipse at 70% 50%, rgba(0, 191, 255, 0.4) 0%, transparent 50%),
-              radial-gradient(ellipse at 30% 70%, rgba(72, 209, 204, 0.3) 0%, transparent 50%),
-              radial-gradient(ellipse at 50% 30%, rgba(30, 144, 255, 0.3) 0%, transparent 50%),
-              linear-gradient(180deg, #001a33 0%, #003d5c 30%, #00334d 70%, #001f33 100%);
-          }
-        }
-      `}</style>
     </div>
   );
 };
@@ -1313,7 +1267,7 @@ const App = () => {
   const WELCOME_MESSAGE = `# Welcome to Maps Python Script Helper! 🗺️
 
 # Getting Started:
-# 1. Browse "Default Templates" in the Scripts tab
+# 1. Browse "Starter Scripts" in the Scripts tab
 # 2. Click on a template to load it here
 # 3. Select an image from the Image Library
 # 4. Click "Run" to execute your script
@@ -1328,15 +1282,24 @@ from PIL import Image
 import numpy as np
 
 def main():
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
     # Your code here...
-    MapsBridge.LogInfo("Hello from Maps!")
+    MapsBridge.log_info("Hello from Maps!")
 
 if __name__ == "__main__":
     main()
 `;
 
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const s = localStorage.getItem('currentUser');
+      if (s) {
+        const u = JSON.parse(s);
+        if (u && u.isAnonymous) return u;
+      }
+    } catch (_) {}
+    return null;
+  });
   const [activeTab, setActiveTab] = useState('welcome'); // Start at welcome screen
   const [code, setCode] = useState(WELCOME_MESSAGE);
   const [editorKey, setEditorKey] = useState(0); // Force editor recreation
@@ -1367,53 +1330,86 @@ if __name__ == "__main__":
   const [assistantWidth, setAssistantWidth] = useState(360); // Default width in pixels
   const [isResizing, setIsResizing] = useState(false);
   const [isCodeUpdating, setIsCodeUpdating] = useState(false); // Track code update animation
-  const [aiModel, setAiModel] = useState('gemini-2.5-flash-lite'); // Always default to flash-lite
+  const [aiModel, setAiModel] = useState('codex-mini-latest'); // Default to codex-mini-latest
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [isSaveAsMode, setIsSaveAsMode] = useState(false); // Track if doing "Save As" (always create new)
   const [scriptName, setScriptName] = useState('');
   const [scriptDescription, setScriptDescription] = useState('');
   const [userScripts, setUserScripts] = useState([]);
   const [libraryScripts, setLibraryScripts] = useState([]); // Library scripts from database
-  const [scriptsSubTab, setScriptsSubTab] = useState('templates'); // 'templates' or 'user'
+  const [communityScripts, setCommunityScripts] = useState([]); // Community-shared scripts
+  const [scriptsSubTab, setScriptsSubTab] = useState('templates'); // 'templates', 'user', or 'community'
   const [currentScript, setCurrentScript] = useState(null); // Track currently loaded script for updates
+  const [communitySearch, setCommunitySearch] = useState(''); // Community search filter
+  const [showPublishDialog, setShowPublishDialog] = useState(false); // "Share to Community" dialog
+  const [publishingScript, setPublishingScript] = useState(null); // Script being published
+  const [publishImageId, setPublishImageId] = useState(''); // Selected image for publish
   const [toast, setToast] = useState(null); // Toast notification state
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false); // Track left panel collapsed state
   const [theme, setTheme] = useState('light'); // Theme: 'light' or 'dark'
+  const [changePasswordCurrent, setChangePasswordCurrent] = useState('');
+  const [changePasswordNew, setChangePasswordNew] = useState('');
+  const [changePasswordConfirm, setChangePasswordConfirm] = useState('');
+  const [showChangePasswords, setShowChangePasswords] = useState(false);
+  const [changePasswordError, setChangePasswordError] = useState('');
+  const [changePasswordSuccess, setChangePasswordSuccess] = useState('');
+  const [changePasswordLoading, setChangePasswordLoading] = useState(false);
 
   const isDark = theme === 'dark';
 
-  // Load current user from localStorage on mount
+  // Helper: auth headers for API calls (Bearer token when logged in)
+  const authHeaders = () => {
+    const token = localStorage.getItem('authToken');
+    const h = { 'Content-Type': 'application/json' };
+    if (token) h['Authorization'] = `Bearer ${token}`;
+    return h;
+  };
+
+  // Load current user from localStorage / validate token on mount
   useEffect(() => {
+    const token = localStorage.getItem('authToken');
     const savedUser = localStorage.getItem('currentUser');
+    if (token) {
+      // Validate token and restore user
+      fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.user) {
+            const user = data.user;
+            localStorage.setItem('currentUser', JSON.stringify(user));
+            setCurrentUser(user);
+            setUserId(user.id);
+            setActiveTab('welcome');
+            setCode('');
+            setCurrentScript(null);
+          } else {
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('currentUser');
+            setCurrentUser(null);
+            setUserId(null);
+          }
+        })
+        .catch(() => {
+          localStorage.removeItem('authToken');
+          localStorage.removeItem('currentUser');
+          setCurrentUser(null);
+          setUserId(null);
+        });
+      return;
+    }
     if (savedUser) {
       try {
         const user = JSON.parse(savedUser);
-        console.log('[MapsScriptHelper] Loading user from localStorage, setting activeTab to welcome');
-        // Clear AI + workspace state (same behavior as "New Chat")
-        setMessages([]);
-        setAiModel('gemini-2.5-flash-lite');
-        setLastError(null);
-        setOutput('Ready.');
-        setOriginalImage(null);
-        setResultImage(null);
-        setOutputFiles([]);
-        setSelectedImage(null);
-        setSelectedLibraryImage(null);
-        setUploadedFile(null);
-        setShowUploadModal(false);
-        setShowLibrarySelectionModal(false);
-        setShowImageViewer(false);
-        setViewerImage(null);
-        if (monacoEditorRef.current) {
-          monacoEditorRef.current.setValue('');
+        if (user.isAnonymous) {
+          setCurrentUser(user);
+          setUserId(null);
+          setActiveTab('welcome');
+          setCode('');
+          setCurrentScript(null);
+        } else {
+          localStorage.removeItem('currentUser');
         }
-
-        setCurrentUser(user);
-        setUserId(user.id);
-        // Always start on welcome screen when loading from localStorage
-        setActiveTab('welcome');
-        setCode(''); // Clear code to show welcome screen
-        setCurrentScript(null);
       } catch (e) {
         console.error('Failed to parse saved user:', e);
         localStorage.removeItem('currentUser');
@@ -1425,7 +1421,7 @@ if __name__ == "__main__":
     console.log('[MapsScriptHelper] Logging in user, setting activeTab to welcome');
     // Clear AI + workspace state (same behavior as "New Chat")
     setMessages([]);
-    setAiModel('gemini-2.5-flash-lite');
+    setAiModel('codex-mini-latest');
     setLastError(null);
     setOutput('Ready.');
     setOriginalImage(null);
@@ -1463,6 +1459,7 @@ if __name__ == "__main__":
     }
     
     localStorage.removeItem('currentUser');
+    localStorage.removeItem('authToken');
     setCurrentUser(null);
     setUserId(null);
     // Clear user-specific data
@@ -1476,34 +1473,51 @@ if __name__ == "__main__":
     setEditorKey(prev => prev + 1); // Force editor recreation
   };
 
-  const handleResetAllUserData = async () => {
-    if (!confirm('⚠️ RESET ALL USER DATA?\n\nThis will permanently delete:\n• All user accounts\n• All saved scripts (user-created)\n• All uploaded images (user-uploaded)\n\nDefault templates and library images will be kept.\n\nThis action CANNOT be undone!\n\nAre you absolutely sure?')) {
+  const handleChangePassword = async () => {
+    setChangePasswordError('');
+    setChangePasswordSuccess('');
+    if (!changePasswordCurrent) {
+      setChangePasswordError('Enter your current password.');
       return;
     }
-    
+    if (!changePasswordNew || changePasswordNew.length < 6) {
+      setChangePasswordError('New password must be at least 6 characters.');
+      return;
+    }
+    if (changePasswordNew !== changePasswordConfirm) {
+      setChangePasswordError('New passwords do not match.');
+      return;
+    }
+    setChangePasswordLoading(true);
     try {
-      const response = await fetch('/api/admin/reset-user-data', {
-        method: 'POST'
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          current_password: changePasswordCurrent,
+          new_password: changePasswordNew
+        })
       });
-      const data = await response.json();
-      
-      if (data.success) {
-        showToast(`Reset complete: ${data.deleted.users} users, ${data.deleted.scripts} scripts, ${data.deleted.images} images deleted`, 'success');
-        // Log out the current user
-        localStorage.removeItem('currentUser');
-        setCurrentUser(null);
-        setUserId(null);
-        setUserScripts([]);
-        setLibraryImages([]);
-        setSelectedLibraryImage(null);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setChangePasswordSuccess('Password updated successfully.');
+        setChangePasswordCurrent('');
+        setChangePasswordNew('');
+        setChangePasswordConfirm('');
+        setTimeout(() => setChangePasswordSuccess(''), 3000);
       } else {
-        showToast('Failed to reset data: ' + (data.error || 'Unknown error'), 'error');
+        let errMsg = data.error || data.detail;
+        if (Array.isArray(errMsg)) errMsg = errMsg[0]?.msg || JSON.stringify(errMsg);
+        if (res.status === 403) errMsg = errMsg || 'Session expired. Please sign out and sign in again.';
+        setChangePasswordError(errMsg || 'Failed to update password.');
       }
-    } catch (error) {
-      showToast('Failed to reset data: ' + error.message, 'error');
+    } catch (e) {
+      setChangePasswordError(e.message || 'Network error.');
+    } finally {
+      setChangePasswordLoading(false);
     }
   };
-  
+
   // Example scripts for the My Scripts tab
   // Library scripts are now loaded from database API
   // See loadLibraryScripts() function below
@@ -1546,18 +1560,18 @@ def get_thermal_channels(gray_array):
 
 def main():
     # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
     
     # 2. Load the input image
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
-    input_path = os.path.join(source_folder, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     img = Image.open(input_path).convert("L")
     gray_array = np.array(img)
     
-    MapsBridge.LogInfo(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
+    MapsBridge.log_info(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
     
     # 3. Generate thermal colormap channels
     red_intensity, green_intensity, blue_intensity = get_thermal_channels(gray_array)
@@ -1576,33 +1590,33 @@ def main():
     Image.fromarray(blue_intensity, mode="L").save(blue_path)
     
     # 5. Create output tile set
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Thermal " + sourceTileSet.Name, 
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Thermal " + source_tile_set.name, 
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
+    output_tile_set = output_info.tile_set
     
     # 6. Create channels with their display colors (additive blending)
-    MapsBridge.CreateChannel("Red", (255, 0, 0), True, outputTileSet.Guid)
-    MapsBridge.CreateChannel("Green", (0, 255, 0), True, outputTileSet.Guid)
-    MapsBridge.CreateChannel("Blue", (0, 0, 255), True, outputTileSet.Guid)
+    MapsBridge.create_channel("Red", (255, 0, 0), True, output_tile_set.guid)
+    MapsBridge.create_channel("Green", (0, 255, 0), True, output_tile_set.guid)
+    MapsBridge.create_channel("Blue", (0, 0, 255), True, output_tile_set.guid)
     
     # 7. Send each intensity map to its channel
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Red", red_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Red", red_path, True, output_tile_set.guid
     )
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Green", green_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Green", green_path, True, output_tile_set.guid
     )
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Blue", blue_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Blue", blue_path, True, output_tile_set.guid
     )
     
-    MapsBridge.AppendNotes(f"Tile [{tileInfo.Column}, {tileInfo.Row}] processed\\n", outputTileSet.Guid)
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.append_notes(f"Tile [{tile_info.column}, {tile_info.row}] processed\\n", output_tile_set.guid)
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()`
@@ -1623,23 +1637,23 @@ import numpy as np
 
 def main():
     # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
     
     # Get threshold from script parameters (default: 128)
     try:
-        threshold = float(request.ScriptParameters) if request.ScriptParameters else 128
+        threshold = float(request.script_parameters) if request.script_parameters else 128
     except ValueError:
         threshold = 128
     
     # 2. Load the input image
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
-    input_path = os.path.join(source_folder, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     img = Image.open(input_path).convert("L")
     
-    MapsBridge.LogInfo(f"Loaded: {input_filename}, Threshold: {threshold}")
+    MapsBridge.log_info(f"Loaded: {input_filename}, Threshold: {threshold}")
     
     # 3. Apply threshold - pixels above threshold become white, below become black
     result = img.point(lambda p: 255 if p > threshold else 0)
@@ -1652,21 +1666,21 @@ def main():
     result.save(output_path)
     
     # 5. Create output tile set and channel
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Threshold " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Threshold " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
-    MapsBridge.CreateChannel("Highlight", (255, 0, 0), True, outputTileSet.Guid)
+    output_tile_set = output_info.tile_set
+    MapsBridge.create_channel("Highlight", (255, 0, 0), True, output_tile_set.guid)
     
     # 6. Send output
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Highlight", output_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Highlight", output_path, True, output_tile_set.guid
     )
     
-    MapsBridge.AppendNotes(f"Tile [{tileInfo.Column}, {tileInfo.Row}] threshold={threshold}\\n", outputTileSet.Guid)
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.append_notes(f"Tile [{tile_info.column}, {tile_info.row}] threshold={threshold}\\n", output_tile_set.guid)
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()`
@@ -1706,18 +1720,18 @@ def sobel_edge_detection(img_array):
 
 def main():
     # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
     
     # 2. Load the input image
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
-    input_path = os.path.join(source_folder, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     img = Image.open(input_path).convert("L")
     img_array = np.array(img)
     
-    MapsBridge.LogInfo(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
+    MapsBridge.log_info(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
     
     # 3. Apply edge detection
     edges = sobel_edge_detection(img_array)
@@ -1731,21 +1745,21 @@ def main():
     result.save(output_path)
     
     # 5. Create output tile set and channel
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Edges " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Edges " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
-    MapsBridge.CreateChannel("Edges", (0, 255, 255), True, outputTileSet.Guid)
+    output_tile_set = output_info.tile_set
+    MapsBridge.create_channel("Edges", (0, 255, 255), True, output_tile_set.guid)
     
     # 6. Send output
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Edges", output_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Edges", output_path, True, output_tile_set.guid
     )
     
-    MapsBridge.AppendNotes(f"Tile [{tileInfo.Column}, {tileInfo.Row}] edge detection\\n", outputTileSet.Guid)
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.append_notes(f"Tile [{tile_info.column}, {tile_info.row}] edge detection\\n", output_tile_set.guid)
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()`
@@ -1765,16 +1779,16 @@ import MapsBridge
 
 def main():
     # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
     
     # 2. Get input path
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
-    input_path = os.path.join(source_folder, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     
-    MapsBridge.LogInfo(f"Processing: {input_filename}")
+    MapsBridge.log_info(f"Processing: {input_filename}")
     
     # 3. Copy to temp folder (save as PNG for compatibility)
     output_folder = os.path.join(tempfile.gettempdir(), "copy_output")
@@ -1790,20 +1804,20 @@ def main():
     img.save(output_path)
     
     # 4. Create output tile set and channel
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Copy " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Copy " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
-    MapsBridge.CreateChannel("Original", (255, 255, 255), True, outputTileSet.Guid)
+    output_tile_set = output_info.tile_set
+    MapsBridge.create_channel("Original", (255, 255, 255), True, output_tile_set.guid)
     
     # 5. Send output
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Original", output_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Original", output_path, True, output_tile_set.guid
     )
     
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()`
@@ -1960,26 +1974,26 @@ def make_category_rgb(category_map):
 
 def main():
     # 1. Get input from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
 
     # 2. Load the input image (grayscale)
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
-    input_path = os.path.join(source_folder, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     img = Image.open(input_path).convert("L")
     img_array = np.array(img)
 
-    MapsBridge.LogInfo(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
+    MapsBridge.log_info(f"Loaded: {input_filename} ({img.size[0]}x{img.size[1]})")
 
     # 3. Preprocess: blur + CLAHE
     preprocessed = preprocess_image(img_array)
-    MapsBridge.LogInfo("Preprocessing complete (Gaussian blur + CLAHE)")
+    MapsBridge.log_info("Preprocessing complete (Gaussian blur + CLAHE)")
 
     # 4. Segment particles
     labeled, num_particles = segment_particles(preprocessed)
-    MapsBridge.LogInfo(f"Segmentation complete: {num_particles} particles found")
+    MapsBridge.log_info(f"Segmentation complete: {num_particles} particles found")
 
     # 5. Categorize particles
     category_map, stats = categorize_particles(labeled)
@@ -1988,7 +2002,7 @@ def main():
     n_round = sum(s["category"] == 1 for s in stats)
     n_irregular = sum(s["category"] == 2 for s in stats)
     n_small = sum(s["category"] == 3 for s in stats)
-    MapsBridge.LogInfo(
+    MapsBridge.log_info(
         f"Categories: {n_round} round, {n_irregular} irregular, {n_small} small"
     )
 
@@ -2014,51 +2028,51 @@ def main():
 
     mask_img = Image.fromarray(mask_visual, mode="L")
     mask_img.save(mask_path)
-    MapsBridge.LogInfo(f"Saved mask: {os.path.basename(mask_path)}")
+    MapsBridge.log_info(f"Saved mask: {os.path.basename(mask_path)}")
 
     # 9. Save category RGB image
     cat_img = Image.fromarray(category_rgb, mode="RGB")
     cat_img.save(cat_path)
-    MapsBridge.LogInfo(f"Saved categories: {os.path.basename(cat_path)}")
+    MapsBridge.log_info(f"Saved categories: {os.path.basename(cat_path)}")
 
     # 10. Create output tile set in MAPS
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Particle Categories " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs",
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Particle Categories " + source_tile_set.name,
+        target_layer_group_name="Outputs",
     )
-    outputTileSet = outputTileSetInfo.TileSet
+    output_tile_set = output_info.tile_set
 
     # 11. Create channels and send outputs
-    MapsBridge.CreateChannel("Labels", (255, 255, 255), True, outputTileSet.Guid)
-    MapsBridge.CreateChannel("Categories", (255, 255, 255), True, outputTileSet.Guid)
+    MapsBridge.create_channel("Labels", (255, 255, 255), True, output_tile_set.guid)
+    MapsBridge.create_channel("Categories", (255, 255, 255), True, output_tile_set.guid)
 
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row,
-        tileInfo.Column,
+    MapsBridge.send_single_tile_output(
+        tile_info.row,
+        tile_info.column,
         "Labels",
         mask_path,
         True,
-        outputTileSet.Guid,
+        output_tile_set.guid,
     )
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row,
-        tileInfo.Column,
+    MapsBridge.send_single_tile_output(
+        tile_info.row,
+        tile_info.column,
         "Categories",
         cat_path,
         True,
-        outputTileSet.Guid,
+        output_tile_set.guid,
     )
 
     # 12. Append notes (summary counts)
-    MapsBridge.AppendNotes(
+    MapsBridge.append_notes(
         (
-            f"Tile [{tileInfo.Column}, {tileInfo.Row}]: "
+            f"Tile [{tile_info.column}, {tile_info.row}]: "
             f"{num_particles} particles "
             f"({n_round} round, {n_irregular} irregular, {n_small} small)\\n"
         ),
-        outputTileSet.Guid,
+        output_tile_set.guid,
     )
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()`
@@ -2082,24 +2096,24 @@ import matplotlib.cm as cm
 
 def main():
     # 1. Get the script request from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
     
     # 2. Get input image filename for channel "0"
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
-    input_path = os.path.join(source_folder, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     
     # 3. Load the image and convert to grayscale, then to NumPy array
-    MapsBridge.LogInfo(f"Loading: {input_path}")
+    MapsBridge.log_info(f"Loading: {input_path}")
     img = Image.open(input_path).convert("L")  # Convert to grayscale
     gray_data = np.array(img)
     
     # 4. Apply the false color map
     # Normalize the grayscale data to the 0.0-1.0 range
     # This automatically handles both 8-bit and 16-bit images
-    MapsBridge.LogInfo("Applying 'viridis' colormap...")
+    MapsBridge.log_info("Applying 'viridis' colormap...")
     min_val = gray_data.min()
     max_val = gray_data.max()
     
@@ -2124,23 +2138,23 @@ def main():
     base, ext = os.path.splitext(input_filename)
     output_path = os.path.join(output_folder, f"{base}_color.png")
     result_image.save(output_path)
-    MapsBridge.LogInfo(f"Saved false color image to: {output_path}")
+    MapsBridge.log_info(f"Saved false color image to: {output_path}")
     
     # 6. Create the output tile set
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "False Color " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "False Color " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
+    output_tile_set = output_info.tile_set
     
     # 7. Create a channel for the colored output and send the result
-    MapsBridge.CreateChannel("Viridis", (255, 255, 255), True, outputTileSet.Guid)
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Viridis", output_path, True, outputTileSet.Guid
+    MapsBridge.create_channel("Viridis", (255, 255, 255), True, output_tile_set.guid)
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Viridis", output_path, True, output_tile_set.guid
     )
     
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()`
@@ -2164,22 +2178,22 @@ import matplotlib.cm as cm
 
 def main():
     # 1. Get the script request from MAPS
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    sourceTileSet = request.SourceTileSet
-    tileInfo = sourceTileSet.Tiles[0]
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
+    tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
     
     # 2. Get input image filename for channel "0"
-    input_filename = tileInfo.ImageFileNames["0"]
-    source_folder = sourceTileSet.DataFolderPath
-    input_path = os.path.join(source_folder, input_filename)
+    input_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, input_filename)
     
     # 3. Load the image and convert to grayscale
-    MapsBridge.LogInfo(f"Loading: {input_path}")
+    MapsBridge.log_info(f"Loading: {input_path}")
     img = Image.open(input_path).convert("L")
     gray_data = np.array(img)
     
     # 4. Apply viridis colormap
-    MapsBridge.LogInfo("Applying 'viridis' colormap and separating channels...")
+    MapsBridge.log_info("Applying 'viridis' colormap and separating channels...")
     min_val = gray_data.min()
     max_val = gray_data.max()
     
@@ -2210,43 +2224,43 @@ def main():
     Image.fromarray(green_channel, mode="L").save(green_path)
     Image.fromarray(blue_channel, mode="L").save(blue_path)
     
-    MapsBridge.LogInfo("Saved R, G, B channels as grayscale intensity maps")
+    MapsBridge.log_info("Saved R, G, B channels as grayscale intensity maps")
     
     # 7. Create output tile set
-    outputTileSetInfo = MapsBridge.GetOrCreateOutputTileSet(
-        "Viridis Multi-Channel " + sourceTileSet.Name,
-        targetLayerGroupName="Outputs"
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Viridis Multi-Channel " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
-    outputTileSet = outputTileSetInfo.TileSet
+    output_tile_set = output_info.tile_set
     
     # 8. Create three channels with additive blending
     # Each channel gets its corresponding display color
-    MapsBridge.CreateChannel("Red Component", (255, 0, 0), True, outputTileSet.Guid)
-    MapsBridge.CreateChannel("Green Component", (0, 255, 0), True, outputTileSet.Guid)
-    MapsBridge.CreateChannel("Blue Component", (0, 0, 255), True, outputTileSet.Guid)
+    MapsBridge.create_channel("Red Component", (255, 0, 0), True, output_tile_set.guid)
+    MapsBridge.create_channel("Green Component", (0, 255, 0), True, output_tile_set.guid)
+    MapsBridge.create_channel("Blue Component", (0, 0, 255), True, output_tile_set.guid)
     
     # 9. Send each grayscale channel to Maps
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Red Component", red_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Red Component", red_path, True, output_tile_set.guid
     )
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Green Component", green_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Green Component", green_path, True, output_tile_set.guid
     )
-    MapsBridge.SendSingleTileOutput(
-        tileInfo.Row, tileInfo.Column,
-        "Blue Component", blue_path, True, outputTileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Blue Component", blue_path, True, output_tile_set.guid
     )
     
-    MapsBridge.AppendNotes(
-        f"Tile [{tileInfo.Column}, {tileInfo.Row}] - Viridis colormap as multi-channel.\\n"
+    MapsBridge.append_notes(
+        f"Tile [{tile_info.column}, {tile_info.row}] - Viridis colormap as multi-channel.\\n"
         "Toggle R/G/B channels independently, adjust thresholds, or segment by intensity!\\n",
-        outputTileSet.Guid
+        output_tile_set.guid
     )
     
-    MapsBridge.LogInfo("Done! Three channels created with additive blending.")
-    MapsBridge.LogInfo("In Maps: Toggle channels on/off, adjust thresholds independently!")
+    MapsBridge.log_info("Done! Three channels created with additive blending.")
+    MapsBridge.log_info("In Maps: Toggle channels on/off, adjust thresholds independently!")
 
 if __name__ == "__main__":
     main()`
@@ -2292,10 +2306,14 @@ if __name__ == "__main__":
     setAiModel(value);
   };
 
-  // Load library scripts on mount
+  // Load library scripts on mount, community scripts when user changes
   useEffect(() => {
     loadLibraryScripts();
   }, []);
+
+  useEffect(() => {
+    loadCommunityScripts();
+  }, [currentUser]);
   
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -2524,17 +2542,18 @@ if __name__ == "__main__":
     }
   }, [activeTab]); // Only re-run when tab changes, not when code changes
 
-  // Load library images when Image Finder tab is opened or when opening selection modal
+  // Load library images when Image Finder tab is opened, selection modal, or publish dialog
   useEffect(() => {
-    if (currentUser && (activeTab === 'image-finder' || showLibrarySelectionModal)) {
+    if (currentUser && (activeTab === 'image-finder' || showLibrarySelectionModal || showPublishDialog)) {
       loadLibraryImages();
     }
-  }, [activeTab, showLibrarySelectionModal, currentUser]);
+  }, [activeTab, showLibrarySelectionModal, showPublishDialog, currentUser]);
 
   const loadLibraryImages = async () => {
     if (!currentUser) return;
+    const uid = currentUser.isAnonymous ? '' : currentUser.id;
     try {
-      const response = await fetch(`/library/images?user_id=${currentUser.id}`);
+      const response = await fetch(`/library/images${uid ? `?user_id=${uid}` : ''}`);
       const data = await response.json();
       setLibraryImages(data.images || []);
     } catch (error) {
@@ -2550,7 +2569,7 @@ if __name__ == "__main__":
     
     // If no code loaded, automatically load starter code and switch to code tab
     if (!code || code.trim().length === 0) {
-      const starter = `# Start Scripting\n#\n# Tip: scripts should use MapsBridge to read inputs and send outputs.\n# Choose ONE request type:\n#   request = MapsBridge.ScriptTileSetRequest.FromStdIn()\n#   request = MapsBridge.ScriptImageLayerRequest.FromStdIn()\n\nimport MapsBridge\n\n\ndef main():\n    MapsBridge.LogInfo("Ready to script. Add your MAPS Script Bridge logic here.")\n\n\nif __name__ == "__main__":\n    main()\n`;
+      const starter = `# Start Scripting\n#\n# Tip: scripts should use MapsBridge to read inputs and send outputs.\n# Choose ONE request type:\n#   request = MapsBridge.ScriptTileSetRequest.from_stdin()\n#   request = MapsBridge.ScriptImageLayerRequest.from_stdin()\n\nimport MapsBridge\n\n\ndef main():\n    MapsBridge.log_info("Ready to script. Add your MAPS Script Bridge logic here.")\n\n\nif __name__ == "__main__":\n    main()\n`;
       setCurrentScript(null);
       setCode(starter);
       if (monacoEditorRef.current) {
@@ -2583,6 +2602,26 @@ if __name__ == "__main__":
     }
   };
 
+  const handleToggleImageGlobal = async (image) => {
+    const action = image.is_global ? 'unshare' : 'share';
+    try {
+      const headers = authHeaders();
+      const response = await fetch(`/library/images/${image.id}/${action}`, {
+        method: 'POST',
+        headers,
+      });
+      const data = await response.json();
+      if (data.success) {
+        showToast(image.is_global ? 'Image removed from shared images.' : 'Image shared with everyone!', 'success');
+        loadLibraryImages();
+      } else {
+        showToast(data.error || 'Failed to update image.', 'error');
+      }
+    } catch (error) {
+      showToast('Failed: ' + error.message, 'error');
+    }
+  };
+
   const handleLibraryUpload = (newImage) => {
     // Add to library images list
     const updatedImages = [...libraryImages, newImage].sort((a, b) => 
@@ -2598,7 +2637,7 @@ if __name__ == "__main__":
     
     // If no code loaded, automatically load starter code and switch to code tab
     if (!code || code.trim().length === 0) {
-      const starter = `# Start Scripting\n#\n# Tip: scripts should use MapsBridge to read inputs and send outputs.\n# Choose ONE request type:\n#   request = MapsBridge.ScriptTileSetRequest.FromStdIn()\n#   request = MapsBridge.ScriptImageLayerRequest.FromStdIn()\n\nimport MapsBridge\n\n\ndef main():\n    MapsBridge.LogInfo("Ready to script. Add your MAPS Script Bridge logic here.")\n\n\nif __name__ == "__main__":\n    main()\n`;
+      const starter = `# Start Scripting\n#\n# Tip: scripts should use MapsBridge to read inputs and send outputs.\n# Choose ONE request type:\n#   request = MapsBridge.ScriptTileSetRequest.from_stdin()\n#   request = MapsBridge.ScriptImageLayerRequest.from_stdin()\n\nimport MapsBridge\n\n\ndef main():\n    MapsBridge.log_info("Ready to script. Add your MAPS Script Bridge logic here.")\n\n\nif __name__ == "__main__":\n    main()\n`;
       setCurrentScript(null);
       setCode(starter);
       if (monacoEditorRef.current) {
@@ -2618,7 +2657,7 @@ if __name__ == "__main__":
   }, [activeTab, currentUser]);
 
   const loadUserScripts = async () => {
-    if (!currentUser) return;
+    if (!currentUser || currentUser.isAnonymous || !currentUser.id) return;
     console.log('[MapsScriptHelper] Loading user scripts for user:', currentUser.id);
     try {
       const response = await fetch(`/api/user-scripts?user_id=${currentUser.id}`);
@@ -2645,6 +2684,45 @@ if __name__ == "__main__":
     }
   };
 
+  const loadCommunityScripts = async () => {
+    try {
+      const uid = currentUser?.id && !currentUser?.isAnonymous ? currentUser.id : '';
+      const response = await fetch(`/api/community-scripts${uid ? `?user_id=${uid}` : ''}`);
+      const data = await response.json();
+      setCommunityScripts(data.scripts || []);
+    } catch (error) {
+      console.error('[MapsScriptHelper] Failed to load community scripts:', error);
+    }
+  };
+
+  const handleRateScript = async (scriptId, rating) => {
+    if (currentUser?.isAnonymous || !currentUser?.id) {
+      showToast('Create an account to rate scripts.', 'error');
+      return;
+    }
+    try {
+      const headers = authHeaders();
+      const response = await fetch(`/api/community-scripts/${scriptId}/rate`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ rating }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        // Update the script in local state with new rating data
+        setCommunityScripts(prev => prev.map(s =>
+          s.id === scriptId
+            ? { ...s, rating_average: data.rating_average, rating_count: data.rating_count, user_rating: data.user_rating }
+            : s
+        ));
+      } else {
+        showToast(data.error || 'Failed to rate script.', 'error');
+      }
+    } catch (error) {
+      showToast('Failed to rate: ' + error.message, 'error');
+    }
+  };
+
   const handleSaveScript = async () => {
     if (!scriptName.trim()) {
       alert('Please enter a script name');
@@ -2654,24 +2732,26 @@ if __name__ == "__main__":
     const currentCode = monacoEditorRef.current ? monacoEditorRef.current.getValue() : code;
 
     try {
-      // If in "Save As" mode, always create a new script (POST)
-      // Otherwise, use PUT for existing user-created scripts, POST for new scripts and templates
       const isUpdatingExisting = !isSaveAsMode && currentScript && currentScript.is_user_created;
       const url = isUpdatingExisting ? `/api/user-scripts/${currentScript.id}` : '/api/user-scripts';
       const method = isUpdatingExisting ? 'PUT' : 'POST';
-      
+      const headers = authHeaders();
       const response = await fetch(url, {
-        method: method,
-        headers: { 'Content-Type': 'application/json' },
+        method,
+        headers,
         body: JSON.stringify({
           name: scriptName,
           description: scriptDescription,
           code: currentCode,
-          user_id: currentUser.id
+          user_id: currentUser?.id || ''
         })
       });
 
       const data = await response.json();
+      if (response.status === 403 && data.require_auth) {
+        showToast('Create an account to save scripts.', 'error');
+        return;
+      }
       if (data.success) {
         // Determine success message before closing dialog (which resets flags)
         const message = isSaveAsMode ? 'New version saved successfully!' : 
@@ -2695,6 +2775,10 @@ if __name__ == "__main__":
   };
 
   const handleSaveButtonClick = () => {
+    if (currentUser?.isAnonymous || !currentUser?.id) {
+      showToast('Create an account to save scripts.', 'error');
+      return;
+    }
     setIsSaveAsMode(false); // Reset "Save As" mode
     if (currentScript && currentScript.is_user_created) {
       // Update existing script directly
@@ -2712,6 +2796,10 @@ if __name__ == "__main__":
   };
 
   const handleSaveAsClick = () => {
+    if (currentUser?.isAnonymous || !currentUser?.id) {
+      showToast('Create an account to save scripts.', 'error');
+      return;
+    }
     // Always show save dialog to create a new version
     // Pre-fill with current script name + version suffix
     if (currentScript) {
@@ -2753,40 +2841,15 @@ if __name__ == "__main__":
     }
   };
 
-  const handleDeployScript = async () => {
-    if (!currentScript) {
-      showToast('No script loaded to deploy', 'error');
+  const updateScriptDirectly = async (scriptId, code) => {
+    if (currentUser?.isAnonymous || !currentUser?.id) {
+      showToast('Create an account to save scripts.', 'error');
       return;
     }
-
-    const currentCode = monacoEditorRef.current ? monacoEditorRef.current.getValue() : code;
-
-    try {
-      const response = await fetch('/api/deploy-script', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          script_name: currentScript.name,
-          code: currentCode
-        })
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        showToast(`"${currentScript.name}" deployed to ${data.path}`, 'success');
-      } else {
-        showToast('Failed to deploy: ' + (data.error || 'Unknown error'), 'error');
-      }
-    } catch (error) {
-      showToast('Failed to deploy: ' + error.message, 'error');
-    }
-  };
-
-  const updateScriptDirectly = async (scriptId, code) => {
     try {
       const response = await fetch(`/api/user-scripts/${scriptId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           name: currentScript.name,
           description: currentScript.description,
@@ -2796,10 +2859,13 @@ if __name__ == "__main__":
       });
 
       const data = await response.json();
+      if (response.status === 403 && data.require_auth) {
+        showToast('Create an account to save scripts.', 'error');
+        return;
+      }
       if (data.success) {
         setCurrentScript(data.script);
         loadUserScripts();
-        // Show toast notification
         showToast(`"${currentScript.name}" updated successfully!`, 'success');
       } else {
         showToast('Failed to update script: ' + (data.error || 'Unknown error'), 'error');
@@ -2823,6 +2889,24 @@ if __name__ == "__main__":
     }
     // Set current script so we can update it directly
     setCurrentScript(script);
+
+    // If the script has an associated community image, auto-select it
+    if (script.community_image_id && script.community_image_url) {
+      const linkedImage = libraryImages.find(img => img.id === script.community_image_id);
+      if (linkedImage) {
+        setSelectedLibraryImage(linkedImage);
+      } else {
+        // Image may belong to the script author — build a stub from cached data
+        setSelectedLibraryImage({
+          id: script.community_image_id,
+          name: script.community_image_name || 'Community Image',
+          url: script.community_image_url,
+        });
+      }
+      setUploadedFile(null);
+      console.log('[MapsScriptHelper] Auto-selected community image:', script.community_image_name);
+    }
+
     setActiveTab('code');
     console.log('[MapsScriptHelper] Switched to code tab');
   };
@@ -2845,6 +2929,69 @@ if __name__ == "__main__":
       }
     } catch (error) {
       alert('Failed to delete script: ' + error.message);
+    }
+  };
+
+  const handlePublishToCommunity = (script) => {
+    setPublishingScript(script);
+    setPublishImageId('');
+    setShowPublishDialog(true);
+  };
+
+  const submitPublish = async () => {
+    if (!publishImageId) {
+      showToast('Please select an image to associate with this script.', 'error');
+      return;
+    }
+    const image = libraryImages.find(img => img.id === publishImageId);
+    if (!image) {
+      showToast('Selected image not found.', 'error');
+      return;
+    }
+    try {
+      const headers = authHeaders();
+      const response = await fetch(`/api/user-scripts/${publishingScript.id}/publish`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          image_id: image.id,
+          image_url: image.url,
+          image_name: image.name,
+        })
+      });
+      const data = await response.json();
+      if (data.success) {
+        showToast('Script shared to Community!', 'success');
+        setShowPublishDialog(false);
+        setPublishingScript(null);
+        loadUserScripts();
+        loadCommunityScripts();
+      } else {
+        showToast(data.error || 'Failed to share script.', 'error');
+      }
+    } catch (error) {
+      showToast('Failed to share script: ' + error.message, 'error');
+    }
+  };
+
+  const handleUnpublish = async (scriptId) => {
+    if (!confirm('Remove this script from Community? Others will no longer see it.')) return;
+    try {
+      const headers = authHeaders();
+      const response = await fetch(`/api/user-scripts/${scriptId}/unpublish`, {
+        method: 'POST',
+        headers,
+      });
+      const data = await response.json();
+      if (data.success) {
+        showToast('Script removed from Community.', 'success');
+        loadUserScripts();
+        loadCommunityScripts();
+      } else {
+        showToast(data.error || 'Failed to remove.', 'error');
+      }
+    } catch (error) {
+      showToast('Failed: ' + error.message, 'error');
     }
   };
 
@@ -2887,8 +3034,8 @@ if __name__ == "__main__":
     
     fd.append('code', currentCode);
     
-    // Add user_id from current user
-    if (currentUser) {
+    // Add user_id when logged in (not for guest)
+    if (currentUser?.id) {
       fd.append('user_id', currentUser.id);
     }
     
@@ -3684,7 +3831,7 @@ if __name__ == "__main__":
     <div className="app-container">
       {/* Tab Bar */}
       <div className="tab-bar">
-        <div className="tab-logo">
+        <div className="tab-logo" onClick={() => setActiveTab('welcome')} style={{cursor: 'pointer'}} title="Back to Home">
           <span className="material-symbols-outlined">map</span>
           <span className="logo-text">Maps</span>
         </div>
@@ -3730,7 +3877,7 @@ if __name__ == "__main__":
               account_circle
             </span>
             <span style={{ fontSize: '14px', color: '#666', fontWeight: '500' }}>
-              {currentUser?.name || 'User'}
+              {currentUser?.isAnonymous ? 'Guest' : (currentUser?.name || 'User')}
             </span>
           </div>
           <button
@@ -3756,12 +3903,12 @@ if __name__ == "__main__":
               e.currentTarget.style.background = 'transparent';
               e.currentTarget.style.borderColor = '#ddd';
             }}
-            title="Log out"
+            title={currentUser?.isAnonymous ? 'Sign in or create account' : 'Log out'}
           >
             <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
-              logout
+              {currentUser?.isAnonymous ? 'login' : 'logout'}
             </span>
-            Logout
+            {currentUser?.isAnonymous ? 'Sign in' : 'Logout'}
           </button>
           {backendVersion && (
             <div className="tab-version">
@@ -3780,377 +3927,235 @@ if __name__ == "__main__":
         }}>
           <div className="content-panel">
             {/* Welcome Screen - Shown on login */}
-            {activeTab === 'welcome' && (
-              <div className="code-layout" style={{
-                display: 'grid',
-                height: '100%',
-                gridTemplateColumns: isPanelCollapsed ? '60px 1fr' : '280px 1fr'
-              }}>
-                {/* Left Panel */}
-                <div className={`file-panel ${isPanelCollapsed ? 'collapsed' : ''}`}>
-                  <button 
-                    className="panel-collapse-btn" 
-                    onClick={() => setIsPanelCollapsed(!isPanelCollapsed)}
-                    title={isPanelCollapsed ? "Expand panel" : "Collapse panel"}
-                  >
-                    <span className="material-symbols-outlined">
-                      {isPanelCollapsed ? 'chevron_right' : 'chevron_left'}
-                    </span>
-                  </button>
-                  
-                  <div className={`file-toolbar ${!currentScript ? 'no-script' : ''}`}>
-                    <button className="md-button md-button-filled" onClick={handleRun} title="Run script">
-                      <span className="material-symbols-outlined" style={{fontSize: '18px'}}>play_arrow</span>
-                      {!isPanelCollapsed && 'Run'}
-                    </button>
-                    <button className="md-button md-button-outlined" onClick={handleSaveButtonClick} title={currentScript && currentScript.is_user_created ? `Update "${currentScript.name}"` : "Save script to My Scripts"}>
-                      <span className="material-symbols-outlined" style={{fontSize: '18px'}}>save</span>
-                      {!isPanelCollapsed && (currentScript && currentScript.is_user_created ? 'Update' : 'Save Script')}
-                    </button>
-                    {currentScript && currentScript.is_user_created && (
-                      <button className="md-button md-button-outlined" onClick={handleSaveAsClick} title="Save as new version with different name">
-                        <span className="material-symbols-outlined" style={{fontSize: '18px'}}>save_as</span>
-                        {!isPanelCollapsed && 'Save As'}
-                      </button>
-                    )}
-                    <button 
-                      className="md-button md-button-outlined" 
-                      onClick={handleDeployScript} 
-                      disabled={!currentScript}
-                      title="Load a script first"
-                    >
-                      <span className="material-symbols-outlined" style={{fontSize: '18px'}}>upload</span>
-                      {!isPanelCollapsed && 'Deploy Script'}
-                    </button>
-                    <button 
-                      className="md-button md-button-outlined" 
-                      onClick={() => {
-                        if (monacoEditorRef.current) {
-                          monacoEditorRef.current.setValue('');
-                        }
-                        setCode('');
-                      }}
-                      title="Copy code to clipboard"
-                    >
-                      <span className="material-symbols-outlined" style={{fontSize: '18px'}}>content_copy</span>
-                      {!isPanelCollapsed && 'Copy Code'}
-                    </button>
-                  </div>
+            {activeTab === 'welcome' && (() => {
+              const now = Date.now();
+              const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+              const featuredCommunityScripts = [...communityScripts]
+                .map(s => {
+                  const age = now - new Date(s.updated_at || s.created_at).getTime();
+                  const recencyBonus = age < SEVEN_DAYS ? 1.5 * (1 - age / SEVEN_DAYS) : 0;
+                  const score = (s.rating_average || 0) + recencyBonus + Math.random() * 2;
+                  return { script: s, score };
+                })
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 6)
+                .map(s => s.script);
+              return (
+              <div className="welcome-screen">
+                <div className="welcome-screen-inner">
 
-                  {!isPanelCollapsed && (
-                    <div className="image-selection-buttons">
-                      <button 
-                        className="md-button md-button-outlined" 
-                        style={{marginTop: '16px'}}
-                        onClick={() => setShowLibrarySelectionModal(true)}
-                        title="Select an image from your library"
-                      >
-                        <span className="material-symbols-outlined" style={{fontSize: '18px'}}>photo_library</span>
-                        Select from Library
-                      </button>
-                      
-                      <button 
-                        className="md-button md-button-outlined" 
-                        style={{marginTop: '8px'}}
-                        onClick={() => document.getElementById('file-input').click()}
-                        title="Upload a new image file"
-                      >
-                        <span className="material-symbols-outlined" style={{fontSize: '18px'}}>upload_file</span>
-                        Upload New Image
-                      </button>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Selected Image Thumbnail - Also show on welcome screen */}
-                {!isPanelCollapsed && (selectedLibraryImage || uploadedFile) && (
-                  <div className="selected-image-thumbnail">
-                    <div className="thumbnail-header">
-                      <span style={{fontSize: '12px', fontWeight: '500', color: '#666'}}>Selected Image</span>
-                      <button
-                        className="thumbnail-clear"
-                        onClick={() => {
-                          setSelectedLibraryImage(null);
-                          setUploadedFile(null);
-                        }}
-                        title="Clear selection"
-                      >
-                        <span className="material-symbols-outlined" style={{fontSize: '16px'}}>close</span>
-                      </button>
-                    </div>
-                    <div className="thumbnail-preview">
-                      {selectedLibraryImage ? (
-                        <>
-                          <img src={selectedLibraryImage.url} alt={selectedLibraryImage.name} className="thumbnail-preview-image" />
-                          <button
-                            className="thumbnail-preview-view-btn"
-                            onClick={() => {
-                              setViewerImage(selectedLibraryImage);
-                              setShowImageViewer(true);
-                            }}
-                            title="View image in full size"
-                          >
-                            <span className="material-symbols-outlined">zoom_in</span>
-                          </button>
-                          <div className="thumbnail-info">
-                            <div className="thumbnail-name">{selectedLibraryImage.name}</div>
-                            <div className="thumbnail-type" style={{
-                              backgroundColor: selectedLibraryImage.type === 'SEM' ? '#1976d2' : selectedLibraryImage.type === 'SDB' ? '#388e3c' : '#f57c00'
-                            }}>
-                              {selectedLibraryImage.type}
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <img src={URL.createObjectURL(uploadedFile)} alt={uploadedFile.name} className="thumbnail-preview-image" />
-                          <button
-                            className="thumbnail-preview-view-btn"
-                            onClick={() => {
-                              setViewerImage({
-                                url: URL.createObjectURL(uploadedFile),
-                                name: uploadedFile.name
-                              });
-                              setShowImageViewer(true);
-                            }}
-                            title="View image in full size"
-                          >
-                            <span className="material-symbols-outlined">zoom_in</span>
-                          </button>
-                          <div className="thumbnail-info">
-                            <div className="thumbnail-name">{uploadedFile.name}</div>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Welcome Content */}
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  height: '100%',
-                  background: isDark
-                    ? 'linear-gradient(135deg, #0f1115 0%, #151a22 100%)'
-                    : 'linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%)',
-                  padding: '40px',
-                  overflow: 'auto'
-                }}>
-                  <div style={{
-                    maxWidth: '800px',
-                    width: '100%',
-                    textAlign: 'center'
-                  }}>
-                    <div style={{
-                      margin: '0 auto 24px'
-                    }}>
-                      <MapsAILogo size={160} showText={true} />
-                    </div>
-                    
-                    <h1 style={{
-                      fontSize: '36px',
-                      fontWeight: '400',
-                      margin: '0 0 12px 0',
-                      color: isDark ? '#f3f4f6' : '#1c1b1f'
-                    }}>Welcome to MAPS Script Helper</h1>
-                    <p style={{
-                      fontSize: '16px',
-                      color: isDark ? '#b6bcc8' : '#49454f',
-                      margin: '0 0 40px 0'
-                    }}>
+                  {/* Hero - Compact */}
+                  <div className="welcome-hero">
+                    <MapsAILogo size={100} showText={true} />
+                    <h1 className="welcome-hero-title" style={{ color: isDark ? '#f3f4f6' : '#1c1b1f' }}>
+                      MAPS Script Helper
+                    </h1>
+                    <p className="welcome-hero-subtitle" style={{ color: isDark ? '#b6bcc8' : '#49454f' }}>
                       Develop and test Python scripts for MAPS Script Bridge with instant feedback
                     </p>
-                    
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 1fr',
-                      gap: '20px',
-                      marginBottom: '32px'
+                  </div>
+
+                  {/* Quick Actions - Horizontal Row */}
+                  <div className="welcome-quick-actions">
+                    <div className="md3-card md3-card-filled welcome-action-card" onClick={() => {
+                      const starter = `# Start Scripting\n#\n# Tip: scripts should use MapsBridge to read inputs and send outputs.\n# Choose ONE request type:\n#   request = MapsBridge.ScriptTileSetRequest.from_stdin()\n#   request = MapsBridge.ScriptImageLayerRequest.from_stdin()\n\nimport MapsBridge\n\n\ndef main():\n    MapsBridge.log_info("Ready to script. Add your MAPS Script Bridge logic here.")\n\n\nif __name__ == \"__main__\":\n    main()\n`;
+                      setCurrentScript(null);
+                      setCode(starter);
+                      setActiveTab('code');
                     }}>
-                      <div className="md3-card md3-card-filled welcome-card-small" onClick={() => {
-                        const starter = `# Start Scripting\n#\n# Tip: scripts should use MapsBridge to read inputs and send outputs.\n# Choose ONE request type:\n#   request = MapsBridge.ScriptTileSetRequest.FromStdIn()\n#   request = MapsBridge.ScriptImageLayerRequest.FromStdIn()\n\nimport MapsBridge\n\n\ndef main():\n    MapsBridge.LogInfo("Ready to script. Add your MAPS Script Bridge logic here.")\n\n\nif __name__ == \"__main__\":\n    main()\n`;
-                        setCurrentScript(null);
-                        setCode(starter);
-                        setActiveTab('code');
-                      }} style={{cursor: 'pointer'}}>
-                        <div className="md3-card-content">
-                          <div className="md3-card-icon">
-                            <span className="material-symbols-outlined">code</span>
-                          </div>
-                          <h3 className="md3-title-large">Start Scripting</h3>
-                          <p className="md3-body-medium">Open the editor with a blank starter script (no template required)</p>
-                        </div>
-                        <div className="md3-card-state-layer"></div>
+                      <div className="welcome-action-icon">
+                        <span className="material-symbols-outlined">code</span>
                       </div>
+                      <span className="welcome-action-label">Start Scripting</span>
+                      <div className="md3-card-state-layer"></div>
+                    </div>
 
-                      <div className="md3-card md3-card-filled welcome-card-small" onClick={() => setActiveTab('scripts')} style={{cursor: 'pointer'}}>
-                        <div className="md3-card-content">
-                          <div className="md3-card-icon">
-                            <span className="material-symbols-outlined">inventory_2</span>
-                          </div>
-                          <h3 className="md3-title-large">Browse Example Scripts</h3>
-                          <p className="md3-body-medium">Start with ready-to-use templates for common EM image processing tasks</p>
-                        </div>
-                        <div className="md3-card-state-layer"></div>
+                    <div className="md3-card md3-card-filled welcome-action-card" onClick={() => setActiveTab('scripts')}>
+                      <div className="welcome-action-icon">
+                        <span className="material-symbols-outlined">inventory_2</span>
                       </div>
+                      <span className="welcome-action-label">Browse Scripts</span>
+                      <div className="md3-card-state-layer"></div>
+                    </div>
 
-                      <div className="md3-card md3-card-filled welcome-card-small" onClick={() => setActiveTab('image-finder')} style={{cursor: 'pointer'}}>
-                        <div className="md3-card-content">
-                          <div className="md3-card-icon">
-                            <span className="material-symbols-outlined">photo_library</span>
-                          </div>
-                          <h3 className="md3-title-large">Browse Image Library</h3>
-                          <p className="md3-body-medium">View and select images from your library to use with scripts</p>
-                        </div>
-                        <div className="md3-card-state-layer"></div>
+                    <div className="md3-card md3-card-filled welcome-action-card" onClick={() => setActiveTab('image-finder')}>
+                      <div className="welcome-action-icon" style={{ background: '#f57c00' }}>
+                        <span className="material-symbols-outlined">photo_library</span>
                       </div>
+                      <span className="welcome-action-label">Image Library</span>
+                      <div className="md3-card-state-layer"></div>
+                    </div>
 
-                      <div className="md3-card md3-card-filled welcome-card-small" onClick={async () => {
-                        // Quick Start: Load image, script, and run
-                        try {
-                          // 1. Load library images if not already loaded
-                          let imagesToSearch = libraryImages;
-                          if (imagesToSearch.length === 0 && currentUser) {
-                            const response = await fetch(`/library/images?user_id=${currentUser.id}`);
-                            const data = await response.json();
-                            imagesToSearch = data.images || [];
-                            setLibraryImages(imagesToSearch);
-                          }
-                          
-                          // 2. Find the specific image
-                          const targetImageName = 'Tile_004-003-000000_2-000.s0001_e00';
-                          const imageToLoad = imagesToSearch.find(img => 
-                            img.name.includes(targetImageName) || img.name === targetImageName
-                          ) || (imagesToSearch.length > 0 ? imagesToSearch[0] : null);
-                          
-                          if (!imageToLoad) {
-                            alert(`Image "${targetImageName}" not found in library. Please upload it first.`);
-                            setActiveTab('image-finder');
-                            return;
-                          }
-                          
-                          // 3. Set the image first
-                          setSelectedLibraryImage(imageToLoad);
-                          
-                          // 4. Find and load the False Color - Single Image script
-                          // Try to find in library scripts, fallback to legacy
-                          const scriptToLoad = exampleScripts.find(s => s.id === 'false-color-single-image') || 
-                                              legacyExampleScripts.find(s => s.id === 'false-color-single-image');
-                          if (!scriptToLoad) {
-                            alert('False Color - Single Image script not found.');
-                            return;
-                          }
-                          
-                          // 5. Load the script (this switches to code tab)
-                          handleLoadScript(scriptToLoad);
-                          
-                          // 6. Wait for script to load, then run with the image directly
-                          // Pass imageToLoad directly to handleRun to avoid state update timing issues
-                          setTimeout(async () => {
-                            await handleRun(imageToLoad);
-                          }, 500);
-                        } catch (error) {
-                          console.error('Quick Start error:', error);
-                          alert('Quick Start failed: ' + error.message);
+                    <div className="md3-card md3-card-filled welcome-action-card" onClick={async () => {
+                      try {
+                        let imagesToSearch = libraryImages;
+                        if (imagesToSearch.length === 0 && currentUser) {
+                          const response = await fetch(`/library/images?user_id=${currentUser.id}`);
+                          const data = await response.json();
+                          imagesToSearch = data.images || [];
+                          setLibraryImages(imagesToSearch);
                         }
-                      }} style={{cursor: 'pointer'}}>
-                        <div className="md3-card-content">
-                          <div className="md3-card-icon" style={{background: '#4caf50'}}>
-                            <span className="material-symbols-outlined">rocket_launch</span>
+                        const targetImageName = 'Tile_004-003-000000_2-000.s0001_e00';
+                        const imageToLoad = imagesToSearch.find(img =>
+                          img.name.includes(targetImageName) || img.name === targetImageName
+                        ) || (imagesToSearch.length > 0 ? imagesToSearch[0] : null);
+                        if (!imageToLoad) {
+                          alert(`Image "${targetImageName}" not found in library. Please upload it first.`);
+                          setActiveTab('image-finder');
+                          return;
+                        }
+                        setSelectedLibraryImage(imageToLoad);
+                        const scriptToLoad = exampleScripts.find(s => s.id === 'false-color-single-image') ||
+                                            legacyExampleScripts.find(s => s.id === 'false-color-single-image');
+                        if (!scriptToLoad) {
+                          alert('False Color - Single Image script not found.');
+                          return;
+                        }
+                        handleLoadScript(scriptToLoad);
+                        setTimeout(async () => { await handleRun(imageToLoad); }, 500);
+                      } catch (error) {
+                        console.error('Quick Start error:', error);
+                        alert('Quick Start failed: ' + error.message);
+                      }
+                    }}>
+                      <div className="welcome-action-icon" style={{ background: '#4caf50' }}>
+                        <span className="material-symbols-outlined">rocket_launch</span>
+                      </div>
+                      <span className="welcome-action-label">Quick Start</span>
+                      <div className="md3-card-state-layer"></div>
+                    </div>
+                  </div>
+
+                  {/* Community Scripts Section */}
+                  <div className="welcome-community-section">
+                    <div className="welcome-section-header">
+                      <div className="welcome-section-title" style={{ fontSize: '20px', fontWeight: '500' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '28px', color: isDark ? '#ce93d8' : '#7b1fa2' }}>groups</span>
+                        <span style={{ color: isDark ? '#e0e0e0' : '#1D192B' }}>From the Community</span>
+                      </div>
+                      {communityScripts.length > 0 && (
+                        <button
+                          className="welcome-view-all-btn"
+                          onClick={() => { setScriptsSubTab('community'); setActiveTab('scripts'); }}
+                          style={{ color: isDark ? '#ce93d8' : '#7b1fa2' }}
+                        >
+                          View All
+                          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>arrow_forward</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {communityScripts.length === 0 ? (
+                      <div className="welcome-community-empty" style={{
+                        background: isDark ? '#2a2a2a' : '#faf5ff',
+                        borderColor: isDark ? '#404040' : '#e8def8'
+                      }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '36px', color: isDark ? '#555' : '#ccc' }}>groups</span>
+                        <p style={{ color: isDark ? '#888' : '#666', margin: '8px 0 0 0', fontSize: '14px' }}>
+                          No community scripts yet -- be the first to share!
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="welcome-community-grid">
+                        {featuredCommunityScripts.map(script => (
+                          <div
+                            key={script.id}
+                            className="welcome-community-card"
+                            onClick={() => handleLoadScript(script)}
+                            title={script.description || script.name}
+                            style={{
+                              background: isDark ? '#2a2a2a' : '#fff',
+                              borderColor: isDark ? '#404040' : '#e0e0e0'
+                            }}
+                          >
+                            {(script.community_image_thumbnail_url || script.community_image_url) && (
+                              <div className="welcome-community-card-img">
+                                <img src={script.community_image_thumbnail_url || script.community_image_url} alt="" onError={(e) => { e.target.style.display = 'none'; }} />
+                              </div>
+                            )}
+                            <div className="welcome-community-card-body">
+                              <div className="welcome-community-card-name" style={{ color: isDark ? '#e0e0e0' : '#1D192B' }}>
+                                {script.name}
+                              </div>
+                              <div className="welcome-community-card-meta">
+                                <span className="welcome-community-card-author" style={{ color: isDark ? '#ce93d8' : '#7b1fa2' }}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>person</span>
+                                  {script.author_name}
+                                </span>
+                                <span className="welcome-community-card-rating">
+                                  <span className="material-symbols-outlined" style={{ fontSize: '14px', color: '#ffc107' }}>star</span>
+                                  <span style={{ color: isDark ? '#ccc' : '#666' }}>
+                                    {script.rating_average || 0} ({script.rating_count || 0})
+                                  </span>
+                                </span>
+                              </div>
+                            </div>
                           </div>
-                          <h3 className="md3-title-large">Quick Start</h3>
-                          <p className="md3-body-medium">Load sample image and False Color script, then run automatically</p>
-                        </div>
-                        <div className="md3-card-state-layer"></div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* AI Starter Prompts */}
+                  <div className="welcome-ai-section">
+                    <div className="welcome-section-header" style={{ justifyContent: 'center' }}>
+                      <div className="welcome-section-title">
+                        <span className="material-symbols-outlined" style={{ fontSize: '20px', color: isDark ? '#90caf9' : '#1976d2' }}>auto_awesome</span>
+                        <span style={{ color: isDark ? '#e0e0e0' : '#1D192B' }}>Ask the AI Assistant</span>
                       </div>
                     </div>
-
-                    <div style={{ marginTop: '24px', textAlign: 'center' }}>
-                      <div style={{ marginBottom: '12px', color: isDark ? '#b6bcc8' : '#49454f', fontSize: '14px', fontWeight: '500' }}>
-                        Try a starter AI prompt:
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                        <button
-                          className="md-button md-button-outlined"
-                          onClick={() => handleSendMessage("Tell me about MapsBridge.py: what it does, the core API vs helper functions, and show a minimal example script using the helpers.")}
-                          title="Send this prompt to the AI assistant"
-                        >
-                          Tell me about MapsBridge.py
-                        </button>
-                        <button
-                          className="md-button md-button-outlined"
-                          onClick={() => handleSendMessage("Create a script that applies false color mapping to a grayscale EM image using a colormap like viridis or plasma.")}
-                          title="Send this prompt to the AI assistant"
-                        >
-                          Create a false color visualization
-                        </button>
-                        <button
-                          className="md-button md-button-outlined"
-                          onClick={() => handleSendMessage("Create a script that detects and counts particles in an EM image and displays the count.")}
-                          title="Send this prompt to the AI assistant"
-                        >
-                          Detect and count particles
-                        </button>
-                        <button
-                          className="md-button md-button-outlined"
-                          onClick={() => handleSendMessage("Create a script that detects edges and outputs them.")}
-                          title="Send this prompt to the AI assistant"
-                        >
-                          Create an edge detection script
-                        </button>
-                        <button
-                          className="md-button md-button-outlined"
-                          onClick={() => handleSendMessage("Create a script that enhances image contrast using histogram equalization.")}
-                          title="Send this prompt to the AI assistant"
-                        >
-                          Apply contrast enhancement
-                        </button>
-                        <button
-                          className="md-button md-button-outlined"
-                          onClick={() => handleSendMessage("Help me understand this error and how to fix it. [Paste your error message here]")}
-                          title="Send this prompt to the AI assistant"
-                        >
-                          Help me debug my script
-                        </button>
-                      </div>
-                    </div>
-
-                    <div style={{ marginTop: '24px', textAlign: 'center' }}>
-                      <button
-                        className="md-button md-button-outlined"
-                        onClick={() => setActiveTab('help')}
-                        title="View help documentation"
-                        style={{ fontSize: '12px', padding: '6px 12px' }}
-                      >
-                        <span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '4px' }}>help</span>
-                        Help & Documentation
+                    <div className="welcome-ai-chips">
+                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Tell me about MapsBridge.py: what it does, the core API vs helper functions, and show a minimal example script using the helpers.")} style={{ background: isDark ? '#1a3a5c' : undefined, borderColor: isDark ? '#2d5a8e' : undefined, color: isDark ? '#90caf9' : undefined }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>menu_book</span>
+                        Tell me about MapsBridge.py
+                      </button>
+                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Create a script that applies false color mapping to a grayscale EM image using a colormap like viridis or plasma.")} style={{ background: isDark ? '#1a3a5c' : undefined, borderColor: isDark ? '#2d5a8e' : undefined, color: isDark ? '#90caf9' : undefined }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>palette</span>
+                        Create a false color visualization
+                      </button>
+                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Create a script that detects and counts particles in an EM image and displays the count.")} style={{ background: isDark ? '#1a3a5c' : undefined, borderColor: isDark ? '#2d5a8e' : undefined, color: isDark ? '#90caf9' : undefined }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>bubble_chart</span>
+                        Detect and count particles
+                      </button>
+                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Create a script that detects edges and outputs them.")} style={{ background: isDark ? '#1a3a5c' : undefined, borderColor: isDark ? '#2d5a8e' : undefined, color: isDark ? '#90caf9' : undefined }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>filter_b_and_w</span>
+                        Create an edge detection script
+                      </button>
+                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Create a script that enhances image contrast using histogram equalization.")} style={{ background: isDark ? '#1a3a5c' : undefined, borderColor: isDark ? '#2d5a8e' : undefined, color: isDark ? '#90caf9' : undefined }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>contrast</span>
+                        Apply contrast enhancement
                       </button>
                     </div>
+                  </div>
 
-                    <div style={{
-                      marginTop: '32px',
-                      padding: '16px 20px',
+                  {/* Footer Row */}
+                  <div className="welcome-footer">
+                    <button
+                      className="welcome-footer-help-btn"
+                      onClick={() => setActiveTab('help')}
+                      style={{
+                        color: isDark ? '#90caf9' : '#1976d2',
+                        borderColor: isDark ? '#2d5a8e' : '#bbdefb'
+                      }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>help</span>
+                      Help & Documentation
+                    </button>
+                    <div className="welcome-footer-tip" style={{
                       background: isDark ? 'rgba(25, 118, 210, 0.12)' : '#E8F4FD',
-                      borderRadius: '12px',
-                      borderLeft: isDark ? '4px solid rgba(25, 118, 210, 0.8)' : '4px solid #1976D2',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '12px',
-                      textAlign: 'left'
+                      borderColor: isDark ? 'rgba(25, 118, 210, 0.3)' : '#BBDEFB'
                     }}>
-                      <span className="material-symbols-outlined" style={{color: isDark ? '#90caf9' : '#1976D2', fontSize: '24px'}}>
-                        info
-                      </span>
-                      <span style={{color: isDark ? '#cfe8ff' : '#0D47A1', fontSize: '14px'}}>
+                      <span className="material-symbols-outlined" style={{ color: isDark ? '#90caf9' : '#1976D2', fontSize: '18px' }}>info</span>
+                      <span style={{ color: isDark ? '#cfe8ff' : '#0D47A1', fontSize: '13px' }}>
                         Scripts written here work in both the helper app and real MAPS
                       </span>
                     </div>
                   </div>
+
                 </div>
               </div>
-            )}
+              );
+            })()}
             
             {/* Code Tab - Always rendered but hidden when not active */}
             <div className="code-layout" style={{
@@ -4211,15 +4216,6 @@ if __name__ == "__main__":
                       {!isPanelCollapsed && 'Save As'}
                     </button>
                   )}
-                  <button 
-                    className="md-button md-button-outlined" 
-                    onClick={handleDeployScript} 
-                    disabled={!currentScript}
-                    title={currentScript ? `Deploy "${currentScript.name}" to C:\\project\\Python` : "Load a script first"}
-                  >
-                    <span className="material-symbols-outlined" style={{fontSize: '18px'}}>upload</span>
-                    {!isPanelCollapsed && 'Deploy Script'}
-                  </button>
                   <button className="md-button md-button-outlined" onClick={handleCopyToClipboard} title="Copy code to clipboard">
                     <span className="material-symbols-outlined" style={{fontSize: '18px'}}>content_copy</span>
                     {!isPanelCollapsed && 'Copy Code'}
@@ -4240,7 +4236,13 @@ if __name__ == "__main__":
                       </button>
                       <button 
                         className="md-button md-button-outlined" 
-                        onClick={() => setShowUploadModal(true)}
+                        onClick={() => {
+                          if (currentUser?.isAnonymous || !currentUser?.id) {
+                            showToast('Create an account to upload images.', 'error');
+                            return;
+                          }
+                          setShowUploadModal(true);
+                        }}
                         title="Upload New Image"
                         style={{width: '44px', height: '44px', minWidth: '44px', padding: 0, justifyContent: 'center', borderRadius: '50%'}}
                       >
@@ -4259,7 +4261,13 @@ if __name__ == "__main__":
                       </button>
                       <button 
                         className="md-button md-button-outlined" 
-                        onClick={() => setShowUploadModal(true)}
+                        onClick={() => {
+                          if (currentUser?.isAnonymous || !currentUser?.id) {
+                            showToast('Create an account to upload images.', 'error');
+                            return;
+                          }
+                          setShowUploadModal(true);
+                        }}
                         style={{width: '100%', fontSize: '12px', padding: '8px 12px'}}
                       >
                         <span className="material-symbols-outlined" style={{fontSize: '16px'}}>upload</span>
@@ -4288,7 +4296,7 @@ if __name__ == "__main__":
                     <div className="thumbnail-preview">
                       {selectedLibraryImage ? (
                         <>
-                          <img src={selectedLibraryImage.url} alt={selectedLibraryImage.name} className="thumbnail-preview-image" />
+                          <img src={selectedLibraryImage.thumbnail_url || selectedLibraryImage.url} alt={selectedLibraryImage.name} className="thumbnail-preview-image" />
                           <button
                             className="thumbnail-preview-view-btn"
                             onClick={() => {
@@ -4353,7 +4361,7 @@ if __name__ == "__main__":
                       <div className="md3-welcome-cards">
                         <div className="md3-card md3-card-filled" onClick={() => {
                           // Create a minimal starter script so the editor opens without selecting a template
-                          const starter = `# Start Scripting\n#\n# Tip: scripts should use MapsBridge to read inputs and send outputs.\n# Choose ONE request type:\n#   request = MapsBridge.ScriptTileSetRequest.FromStdIn()\n#   request = MapsBridge.ScriptImageLayerRequest.FromStdIn()\n\nimport MapsBridge\n\n\ndef main():\n    MapsBridge.LogInfo(\"Ready to script. Add your MAPS Script Bridge logic here.\")\n\n\nif __name__ == \"__main__\":\n    main()\n`;
+                          const starter = `# Start Scripting\n#\n# Tip: scripts should use MapsBridge to read inputs and send outputs.\n# Choose ONE request type:\n#   request = MapsBridge.ScriptTileSetRequest.from_stdin()\n#   request = MapsBridge.ScriptImageLayerRequest.from_stdin()\n\nimport MapsBridge\n\n\ndef main():\n    MapsBridge.log_info(\"Ready to script. Add your MAPS Script Bridge logic here.\")\n\n\nif __name__ == \"__main__\":\n    main()\n`;
 
                           setCurrentScript(null);
                           if (monacoEditorRef.current) {
@@ -4377,8 +4385,8 @@ if __name__ == "__main__":
                             <div className="md3-card-icon">
                               <span className="material-symbols-outlined">inventory_2</span>
                             </div>
-                            <h3 className="md3-title-large">Browse Example Scripts</h3>
-                            <p className="md3-body-medium">Start with ready-to-use templates for common EM image processing tasks</p>
+                            <h3 className="md3-title-large">Browse Scripts</h3>
+                            <p className="md3-body-medium">Starter scripts to learn from, or community scripts shared by other users</p>
                           </div>
                           <div className="md3-card-state-layer"></div>
                         </div>
@@ -4513,6 +4521,53 @@ if __name__ == "__main__":
               </div>
             )}
 
+            {/* Publish to Community Dialog */}
+            {showPublishDialog && publishingScript && (
+              <div className="modal-overlay" onClick={() => setShowPublishDialog(false)}>
+                <div className="modal-content save-script-dialog" onClick={(e) => e.stopPropagation()} style={{maxWidth: '520px'}}>
+                  <div className="modal-header">
+                    <h2>Share to Community</h2>
+                    <button className="modal-close" onClick={() => setShowPublishDialog(false)}>
+                      <span className="material-symbols-outlined">close</span>
+                    </button>
+                  </div>
+                  <div className="modal-body">
+                    <p style={{fontSize: '14px', color: '#666', marginBottom: '16px'}}>
+                      Share <strong>{publishingScript.name}</strong> with the community. Select an image that will load by default when others use this script.
+                    </p>
+                    <div className="form-group">
+                      <label className="form-label">Associated Image *</label>
+                      <div className="publish-image-grid">
+                        {libraryImages.length === 0 ? (
+                          <p style={{color: '#999', fontSize: '13px'}}>No images available. Upload an image first.</p>
+                        ) : (
+                          libraryImages.map((img) => (
+                            <div
+                              key={img.id}
+                              className={`publish-image-option ${publishImageId === img.id ? 'selected' : ''}`}
+                              onClick={() => setPublishImageId(img.id)}
+                            >
+                              <img src={img.thumbnail_url || img.url} alt={img.name} />
+                              <span className="publish-image-name">{img.name}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="modal-footer">
+                    <button className="md-button" onClick={() => setShowPublishDialog(false)}>
+                      Cancel
+                    </button>
+                    <button className="md-button md-button-filled" onClick={submitPublish} disabled={!publishImageId}>
+                      <span className="material-symbols-outlined" style={{fontSize: '18px'}}>share</span>
+                      Share to Community
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Output Tab */}
             {activeTab === 'output' && (
               <div className="output-container">
@@ -4610,26 +4665,28 @@ if __name__ == "__main__":
                   
                   {/* Main image viewing area */}
                   <div className="output-main-area">
-                    {isRunning ? (
-                      <div className="main-image-loading">
-                        <div className="loading-spinner"></div>
-                        <h3 style={{color: '#1976d2', fontWeight: '500', marginTop: '24px'}}>Processing...</h3>
-                        <p style={{color: '#666', fontSize: '14px', marginTop: '8px'}}>Running your Python script</p>
-                      </div>
-                    ) : selectedImage ? (
-                      <ImageViewer 
-                        src={selectedImage} 
-                        alt="Selected Image" 
-                        title={allFiles.find(f => f.url === selectedImage)?.name || 'Image'}
-                        isDark={isDark}
-                      />
-                    ) : (
-                      <div className="main-image-placeholder">
-                        <span className="material-symbols-outlined" style={{fontSize: '64px', color: '#ccc', marginBottom: '16px'}}>image</span>
-                        <h3 style={{color: '#999', fontWeight: '400'}}>Main Image Area</h3>
-                        <p style={{color: '#bbb', fontSize: '14px', marginTop: '8px'}}>Click a thumbnail to view an image</p>
-                      </div>
-                    )}
+                    <div className="output-image-area">
+                      {isRunning ? (
+                        <div className="main-image-loading">
+                          <div className="loading-spinner"></div>
+                          <h3 style={{color: '#1976d2', fontWeight: '500', marginTop: '24px'}}>Processing...</h3>
+                          <p style={{color: '#666', fontSize: '14px', marginTop: '8px'}}>Running your Python script</p>
+                        </div>
+                      ) : selectedImage ? (
+                        <ImageViewer 
+                          src={selectedImage} 
+                          alt="Selected Image" 
+                          title={allFiles.find(f => f.url === selectedImage)?.name || 'Image'}
+                          isDark={isDark}
+                        />
+                      ) : (
+                        <div className="main-image-placeholder">
+                          <span className="material-symbols-outlined" style={{fontSize: '64px', color: '#ccc', marginBottom: '16px'}}>image</span>
+                          <h3 style={{color: '#999', fontWeight: '400'}}>Main Image Area</h3>
+                          <p style={{color: '#bbb', fontSize: '14px', marginTop: '8px'}}>Click a thumbnail to view an image</p>
+                        </div>
+                      )}
+                    </div>
                     
                     {/* Console Output */}
                     <div 
@@ -4722,6 +4779,10 @@ if __name__ == "__main__":
                   const imageFiles = files.filter(file => isImageFile(file));
                   
                   if (imageFiles.length > 0) {
+                    if (currentUser?.isAnonymous || !currentUser?.id) {
+                      showToast('Create an account to upload images.', 'error');
+                      return;
+                    }
                     // Open upload modal with the first file pre-selected
                     const file = imageFiles[0];
                     setShowUploadModal(true);
@@ -4742,7 +4803,13 @@ if __name__ == "__main__":
                   <h2>Image Library</h2>
                   <button
                     className="md-button md-button-filled"
-                    onClick={() => setShowUploadModal(true)}
+                    onClick={() => {
+                      if (currentUser?.isAnonymous || !currentUser?.id) {
+                        showToast('Create an account to upload images.', 'error');
+                        return;
+                      }
+                      setShowUploadModal(true);
+                    }}
                   >
                     <span className="material-symbols-outlined" style={{fontSize: '18px'}}>upload</span>
                     Upload Image
@@ -4766,79 +4833,79 @@ if __name__ == "__main__":
                     <p style={{color: '#bbb', fontSize: '14px', marginBottom: '24px'}}>Drag and drop an image here or click upload to get started</p>
                     <button
                       className="md-button md-button-filled"
-                      onClick={() => setShowUploadModal(true)}
+                      onClick={() => {
+                        if (currentUser?.isAnonymous || !currentUser?.id) {
+                          showToast('Create an account to upload images.', 'error');
+                          return;
+                        }
+                        setShowUploadModal(true);
+                      }}
                     >
                       <span className="material-symbols-outlined" style={{fontSize: '18px'}}>upload</span>
                       Upload Image
                     </button>
                   </div>
-                ) : (
-                  <>
-                    {libraryImages.filter(img => img.user_id).length > 0 && (
-                      <div className="library-section">
-                        <div className="sidebar-separator">
-                          <div className="separator-line"></div>
-                          <div className="separator-label">Your Images</div>
-                          <div className="separator-line"></div>
-                        </div>
-                        <div className="library-grid">
-                          {libraryImages
-                            .filter(img => img.user_id)
-                            .map((image) => (
-                              <LibraryImageCard
-                                key={image.id}
-                                image={image}
-                                isSelected={selectedLibraryImage && selectedLibraryImage.id === image.id}
-                                onSelect={handleLibraryImageSelect}
-                                onDelete={handleLibraryImageDelete}
-                                onView={(img) => {
-                                  setViewerImage(img);
-                                  setShowImageViewer(true);
-                                }}
-                              />
-                            ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {libraryImages.filter(img => img.user_id).length > 0 && libraryImages.filter(img => !img.user_id).length > 0 && (
-                      <div className="sidebar-separator">
-                        <div className="separator-line"></div>
-                        <div className="separator-label">Library Images</div>
-                        <div className="separator-line"></div>
-                      </div>
-                    )}
-                    
-                    {libraryImages.filter(img => !img.user_id).length > 0 && (
-                      <div className="library-section">
-                        {libraryImages.filter(img => img.user_id).length === 0 && (
+                ) : (() => {
+                    const myImages = libraryImages.filter(img => img.user_id && img.user_id === currentUser?.id);
+                    const sharedImages = libraryImages.filter(img => img.user_id && img.user_id !== currentUser?.id && img.is_global);
+                    const defaultImages = libraryImages.filter(img => !img.user_id);
+                    const cardProps = (image) => ({
+                      key: image.id,
+                      image,
+                      isSelected: selectedLibraryImage && selectedLibraryImage.id === image.id,
+                      onSelect: handleLibraryImageSelect,
+                      onDelete: handleLibraryImageDelete,
+                      onToggleGlobal: handleToggleImageGlobal,
+                      currentUserId: currentUser?.id,
+                      onView: (img) => { setViewerImage(img); setShowImageViewer(true); },
+                    });
+                    return (<>
+                      {myImages.length > 0 && (
+                        <div className="library-section">
                           <div className="sidebar-separator">
                             <div className="separator-line"></div>
-                            <div className="separator-label">Images</div>
+                            <div className="separator-label">Your Images</div>
                             <div className="separator-line"></div>
                           </div>
-                        )}
-                        <div className="library-grid">
-                          {libraryImages
-                            .filter(img => !img.user_id)
-                            .map((image) => (
-                              <LibraryImageCard
-                                key={image.id}
-                                image={image}
-                                isSelected={selectedLibraryImage && selectedLibraryImage.id === image.id}
-                                onSelect={handleLibraryImageSelect}
-                                onDelete={handleLibraryImageDelete}
-                                onView={(img) => {
-                                  setViewerImage(img);
-                                  setShowImageViewer(true);
-                                }}
-                              />
+                          <div className="library-grid">
+                            {myImages.map((image) => (
+                              <LibraryImageCard {...cardProps(image)} />
                             ))}
+                          </div>
                         </div>
-                      </div>
-                    )}
-                  </>
-                )}
+                      )}
+
+                      {sharedImages.length > 0 && (
+                        <div className="library-section">
+                          <div className="sidebar-separator">
+                            <div className="separator-line"></div>
+                            <div className="separator-label">Shared by Community</div>
+                            <div className="separator-line"></div>
+                          </div>
+                          <div className="library-grid">
+                            {sharedImages.map((image) => (
+                              <LibraryImageCard {...cardProps(image)} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {defaultImages.length > 0 && (
+                        <div className="library-section">
+                          <div className="sidebar-separator">
+                            <div className="separator-line"></div>
+                            <div className="separator-label">Library Images</div>
+                            <div className="separator-line"></div>
+                          </div>
+                          <div className="library-grid">
+                            {defaultImages.map((image) => (
+                              <LibraryImageCard {...cardProps(image)} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>);
+                  })()}
                 <UploadModal
                   isOpen={showUploadModal}
                   onClose={() => setShowUploadModal(false)}
@@ -4858,7 +4925,17 @@ if __name__ == "__main__":
                     onClick={() => setScriptsSubTab('templates')}
                   >
                     <span className="material-symbols-outlined">inventory_2</span>
-                    Default Templates
+                    Starter Scripts
+                  </button>
+                  <button
+                    className={`scripts-sub-tab ${scriptsSubTab === 'community' ? 'active' : ''}`}
+                    onClick={() => setScriptsSubTab('community')}
+                  >
+                    <span className="material-symbols-outlined">groups</span>
+                    Community
+                    {communityScripts.length > 0 && (
+                      <span className="scripts-count-badge">{communityScripts.length}</span>
+                    )}
                   </button>
                   <button
                     className={`scripts-sub-tab ${scriptsSubTab === 'user' ? 'active' : ''}`}
@@ -4881,8 +4958,8 @@ if __name__ == "__main__":
                       <div className="scripts-header-title">
                         <span className="material-symbols-outlined" style={{color: '#1976d2', fontSize: '28px'}}>inventory_2</span>
                         <div>
-                          <h2>Default Templates</h2>
-                          <p className="scripts-subtitle">Pre-built examples to get you started</p>
+                          <h2>Starter Scripts</h2>
+                          <p className="scripts-subtitle">Ready-to-run examples to get you started</p>
                         </div>
                       </div>
                     </div>
@@ -4893,7 +4970,7 @@ if __name__ == "__main__":
                           className="script-card default-template"
                           onClick={() => handleLoadScript(script)}
                         >
-                          <div className="script-badge template-badge">Template</div>
+                          <div className="script-badge template-badge">Starter</div>
                           <div className="script-card-header">
                             <span className="material-symbols-outlined script-icon">code</span>
                             <span className="script-category">{script.category}</span>
@@ -4909,6 +4986,125 @@ if __name__ == "__main__":
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {/* Community Scripts Tab Content */}
+                {scriptsSubTab === 'community' && (
+                  <div className="scripts-tab-content">
+                    <div className="md-card scripts-header-card">
+                      <div className="scripts-header-title">
+                        <span className="material-symbols-outlined" style={{color: '#7b1fa2', fontSize: '28px'}}>groups</span>
+                        <div>
+                          <h2>Community Scripts</h2>
+                          <p className="scripts-subtitle">Scripts shared by other users</p>
+                        </div>
+                      </div>
+                    </div>
+                    {communityScripts.length > 0 && (
+                      <div className="community-search-bar">
+                        <span className="material-symbols-outlined community-search-icon">search</span>
+                        <input
+                          type="text"
+                          className="community-search-input"
+                          placeholder="Search by name, description, or author..."
+                          value={communitySearch}
+                          onChange={(e) => setCommunitySearch(e.target.value)}
+                        />
+                        {communitySearch && (
+                          <button className="community-search-clear" onClick={() => setCommunitySearch('')}>
+                            <span className="material-symbols-outlined" style={{fontSize: '18px'}}>close</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {communityScripts.length === 0 ? (
+                      <div className="empty-scripts">
+                        <span className="material-symbols-outlined" style={{fontSize: '64px', color: '#ccc'}}>groups</span>
+                        <p style={{fontSize: '16px', color: '#666', marginTop: '16px'}}>No community scripts yet</p>
+                        <p style={{fontSize: '14px', color: '#999'}}>Be the first! Save a script, then share it with the community from "My Scripts".</p>
+                      </div>
+                    ) : (() => {
+                      const q = communitySearch.toLowerCase().trim();
+                      const filtered = q
+                        ? communityScripts.filter(s =>
+                            (s.name || '').toLowerCase().includes(q) ||
+                            (s.description || '').toLowerCase().includes(q) ||
+                            (s.author_name || '').toLowerCase().includes(q)
+                          )
+                        : communityScripts;
+                      return filtered.length === 0 ? (
+                        <div className="empty-scripts">
+                          <span className="material-symbols-outlined" style={{fontSize: '48px', color: '#ccc'}}>search_off</span>
+                          <p style={{fontSize: '14px', color: '#999', marginTop: '12px'}}>No scripts match "{communitySearch}"</p>
+                        </div>
+                      ) : (
+                      <div className="scripts-grid">
+                        {filtered.map((script) => (
+                          <div
+                            key={script.id}
+                            className="script-card community-script"
+                            onClick={() => handleLoadScript(script)}
+                          >
+                            <div className="script-badge community-badge">Community</div>
+                            {(script.community_image_thumbnail_url || script.community_image_url) && (
+                              <div className="community-script-image">
+                                <img
+                                  src={script.community_image_thumbnail_url || script.community_image_url}
+                                  alt={script.community_image_name || 'Script image'}
+                                  onError={(e) => { e.target.style.display = 'none'; }}
+                                />
+                              </div>
+                            )}
+                            <div className="script-card-header">
+                              <span className="material-symbols-outlined script-icon">code</span>
+                              <span className="script-author">
+                                <span className="material-symbols-outlined" style={{fontSize: '14px'}}>person</span>
+                                {script.author_name}
+                              </span>
+                            </div>
+                            <h3 className="script-name">{script.name}</h3>
+                            <p className="script-description">{script.description || 'No description'}</p>
+                            <div className="community-star-rating" onClick={(e) => e.stopPropagation()}>
+                              {[1, 2, 3, 4, 5].map((star) => {
+                                const isFilled = star <= Math.round(script.rating_average || 0);
+                                const isUserRated = script.user_rating && star <= script.user_rating;
+                                return (
+                                  <button
+                                    key={star}
+                                    className={`star-btn ${isUserRated ? 'user-rated' : ''} ${isFilled ? 'filled' : ''}`}
+                                    onClick={() => handleRateScript(script.id, star)}
+                                    title={currentUser?.isAnonymous ? 'Log in to rate' : `Rate ${star} star${star > 1 ? 's' : ''}`}
+                                  >
+                                    <span className="material-symbols-outlined">
+                                      {isUserRated || isFilled ? 'star' : 'star_border'}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                              <span className="star-info">
+                                {script.rating_average > 0
+                                  ? `${script.rating_average} (${script.rating_count})`
+                                  : 'No ratings'}
+                              </span>
+                            </div>
+                            <div className="script-card-footer">
+                              <span className="load-script-hint">
+                                <span className="material-symbols-outlined">arrow_forward</span>
+                                Load Script
+                              </span>
+                              {script.community_image_name && (
+                                <span className="community-image-label" title={`Default image: ${script.community_image_name}`}>
+                                  <span className="material-symbols-outlined" style={{fontSize: '14px'}}>image</span>
+                                  {script.community_image_name}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      );
+                    })()}
                   </div>
                 )}
 
@@ -4938,17 +5134,38 @@ if __name__ == "__main__":
                             className="script-card user-script"
                             onClick={() => handleLoadScript(script)}
                           >
-                            <div className="script-badge user-badge">My Script</div>
-                            <button 
-                              className="script-delete-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteUserScript(script.id);
-                              }}
-                              title="Delete script"
-                            >
-                              <span className="material-symbols-outlined">delete</span>
-                            </button>
+                            <div className="script-badge user-badge">
+                              {script.is_community ? 'Shared' : 'My Script'}
+                            </div>
+                            <div className="script-card-actions">
+                              {script.is_community ? (
+                                <button
+                                  className="script-action-btn script-unshare-btn"
+                                  onClick={(e) => { e.stopPropagation(); handleUnpublish(script.id); }}
+                                  title="Remove from Community"
+                                >
+                                  <span className="material-symbols-outlined">visibility_off</span>
+                                </button>
+                              ) : (
+                                <button
+                                  className="script-action-btn script-share-btn"
+                                  onClick={(e) => { e.stopPropagation(); handlePublishToCommunity(script); }}
+                                  title="Share to Community"
+                                >
+                                  <span className="material-symbols-outlined">share</span>
+                                </button>
+                              )}
+                              <button 
+                                className="script-action-btn script-delete-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteUserScript(script.id);
+                                }}
+                                title="Delete script"
+                              >
+                                <span className="material-symbols-outlined">delete</span>
+                              </button>
+                            </div>
                             <div className="script-card-header">
                               <span className="material-symbols-outlined script-icon">code</span>
                               <span className="script-date">{new Date(script.created_at).toLocaleDateString()}</span>
@@ -4960,6 +5177,11 @@ if __name__ == "__main__":
                                 <span className="material-symbols-outlined">arrow_forward</span>
                                 Load Script
                               </span>
+                              {script.is_community && (
+                                <span className="community-shared-indicator" title="Shared with community">
+                                  <span className="material-symbols-outlined" style={{fontSize: '14px'}}>groups</span>
+                                </span>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -5049,398 +5271,95 @@ if __name__ == "__main__":
                   </div>
                 </div>
 
-                {/* Script Deployment Section */}
+                {/* Change Password Section - only for logged-in users */}
+                {currentUser && !currentUser.isAnonymous && (
                 <div className="settings-section">
                   <div className="md-card">
                     <h3 className="settings-section-title">
-                      <span className="material-symbols-outlined" style={{color: '#6750A4', fontSize: '24px'}}>folder</span>
-                      Script Deployment
+                      <span className="material-symbols-outlined" style={{color: '#1976d2', fontSize: '24px'}}>lock</span>
+                      Change password
                     </h3>
                     <p className="settings-section-description">
-                      When you click the "Deploy Script" button in the Code tab, your script will be saved as a Python file 
-                      to your local filesystem. The file will overwrite any existing file with the same name.
+                      Update your account password. You must enter your current password to confirm.
                     </p>
-                    
                     <div className="settings-info-box">
-                      <div className="settings-info-header">
-                        <span className="material-symbols-outlined" style={{color: '#6750A4', fontSize: '20px'}}>folder_open</span>
-                        <strong>Deploy Location</strong>
+                      <div style={{marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                        <button
+                          type="button"
+                          onClick={() => setShowChangePasswords(!showChangePasswords)}
+                          title={showChangePasswords ? 'Hide passwords' : 'Show passwords'}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '6px 12px',
+                            fontSize: '13px',
+                            background: isDark ? '#374151' : '#e5e7eb',
+                            color: isDark ? '#e5e7eb' : '#374151',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{fontSize: '18px'}}>
+                            {showChangePasswords ? 'visibility_off' : 'visibility'}
+                          </span>
+                          {showChangePasswords ? 'Hide passwords' : 'Show passwords'}
+                        </button>
                       </div>
-                      <div className="settings-info-path">
-                        <code>C:\project\Python\</code>
+                      <div style={{marginBottom: '12px'}}>
+                        <label style={{display: 'block', marginBottom: '6px', fontWeight: '500'}}>Current password</label>
+                        <input
+                          type={showChangePasswords ? 'text' : 'password'}
+                          value={changePasswordCurrent}
+                          onChange={(e) => setChangePasswordCurrent(e.target.value)}
+                          placeholder="Enter current password"
+                          style={{width: '100%', maxWidth: '320px', padding: '10px 12px', fontSize: '14px', border: `1px solid ${isDark ? '#4b5563' : '#ddd'}`, borderRadius: '6px', boxSizing: 'border-box', background: isDark ? '#0f1115' : '#fff', color: isDark ? '#e5e7eb' : '#333'}}
+                        />
                       </div>
-                      <p className="settings-info-note">
-                        <span className="material-symbols-outlined" style={{fontSize: '16px', verticalAlign: 'middle'}}>info</span>
-                        This folder is mounted from your host machine into the Docker container
-                      </p>
-                    </div>
-
-                    <div className="settings-usage">
-                      <h4>How to Deploy Scripts</h4>
-                      <ol>
-                        <li>Load or create a script in the <strong>Code</strong> tab</li>
-                        <li>Click the <strong>Deploy Script</strong> button</li>
-                        <li>Your script will be saved to <code>C:\project\Python\[script-name].py</code></li>
-                        <li>Use the deployed script in your MAPS workflows</li>
-                      </ol>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Logs & Analysis Section */}
-                <div className="settings-section">
-                  <div className="md-card">
-                    <h3 className="settings-section-title">
-                      <span className="material-symbols-outlined" style={{color: '#6750A4', fontSize: '24px'}}>analytics</span>
-                      Logs & Analysis
-                    </h3>
-                    <p className="settings-section-description">
-                      View script execution logs and analysis. Every script execution (success or failure) is automatically logged 
-                      to help the AI learn and improve over time.
-                    </p>
-
-                    <div style={{display: 'flex', justifyContent: 'flex-end', marginTop: '8px'}}>
+                      <div style={{marginBottom: '12px'}}>
+                        <label style={{display: 'block', marginBottom: '6px', fontWeight: '500'}}>New password</label>
+                        <input
+                          type={showChangePasswords ? 'text' : 'password'}
+                          value={changePasswordNew}
+                          onChange={(e) => setChangePasswordNew(e.target.value)}
+                          placeholder="Min 6 characters"
+                          style={{width: '100%', maxWidth: '320px', padding: '10px 12px', fontSize: '14px', border: `1px solid ${isDark ? '#4b5563' : '#ddd'}`, borderRadius: '6px', boxSizing: 'border-box', background: isDark ? '#0f1115' : '#fff', color: isDark ? '#e5e7eb' : '#333'}}
+                        />
+                      </div>
+                      <div style={{marginBottom: '12px'}}>
+                        <label style={{display: 'block', marginBottom: '6px', fontWeight: '500'}}>Confirm new password</label>
+                        <input
+                          type={showChangePasswords ? 'text' : 'password'}
+                          value={changePasswordConfirm}
+                          onChange={(e) => setChangePasswordConfirm(e.target.value)}
+                          placeholder="Confirm new password"
+                          style={{width: '100%', maxWidth: '320px', padding: '10px 12px', fontSize: '14px', border: `1px solid ${isDark ? '#4b5563' : '#ddd'}`, borderRadius: '6px', boxSizing: 'border-box', background: isDark ? '#0f1115' : '#fff', color: isDark ? '#e5e7eb' : '#333'}}
+                        />
+                      </div>
+                      {changePasswordError && <p style={{color: '#c00', fontSize: '14px', margin: '0 0 8px 0'}}>{changePasswordError}</p>}
+                      {changePasswordSuccess && <p style={{color: '#0a0', fontSize: '14px', margin: '0 0 8px 0'}}>{changePasswordSuccess}</p>}
                       <button
-                        className="md-button md-button-outlined"
-                        onClick={handleClearLogs}
-                        title="Delete all saved execution logs"
-                        style={{borderColor: '#d32f2f', color: '#d32f2f'}}
-                      >
-                        <span className="material-symbols-outlined" style={{fontSize: '18px'}}>delete_forever</span>
-                        Clear Logs
-                      </button>
-                    </div>
-                    
-                    <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px', marginTop: '16px'}}>
-                      {/* Summary Stats */}
-                      <a 
-                        href="/api/logs/summary" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
+                        onClick={handleChangePassword}
+                        disabled={changePasswordLoading}
                         style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '12px',
-                          padding: '12px 16px',
-                          background: '#f5f5f5',
-                          borderRadius: '8px',
-                          textDecoration: 'none',
-                          color: '#333',
-                          border: '1px solid #e0e0e0',
-                          transition: 'all 0.2s',
-                          cursor: 'pointer'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#e8f4fd';
-                          e.currentTarget.style.borderColor = '#1976d2';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = '#f5f5f5';
-                          e.currentTarget.style.borderColor = '#e0e0e0';
+                          padding: '10px 20px',
+                          background: changePasswordLoading ? '#999' : '#1976d2',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          fontSize: '14px',
+                          fontWeight: '500',
+                          cursor: changePasswordLoading ? 'not-allowed' : 'pointer'
                         }}
                       >
-                        <span className="material-symbols-outlined" style={{color: '#1976d2', fontSize: '24px'}}>summarize</span>
-                        <div style={{flex: 1}}>
-                          <div style={{fontWeight: 500, fontSize: '14px'}}>Summary</div>
-                          <div style={{fontSize: '12px', color: '#666'}}>Success/failure statistics</div>
-                        </div>
-                        <span className="material-symbols-outlined" style={{color: '#999', fontSize: '18px'}}>open_in_new</span>
-                      </a>
-
-                      {/* Full Analysis */}
-                      <a 
-                        href="/api/logs/analysis" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '12px',
-                          padding: '12px 16px',
-                          background: '#f5f5f5',
-                          borderRadius: '8px',
-                          textDecoration: 'none',
-                          color: '#333',
-                          border: '1px solid #e0e0e0',
-                          transition: 'all 0.2s',
-                          cursor: 'pointer'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#e8f4fd';
-                          e.currentTarget.style.borderColor = '#1976d2';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = '#f5f5f5';
-                          e.currentTarget.style.borderColor = '#e0e0e0';
-                        }}
-                      >
-                        <span className="material-symbols-outlined" style={{color: '#1976d2', fontSize: '24px'}}>bar_chart</span>
-                        <div style={{flex: 1}}>
-                          <div style={{fontWeight: 500, fontSize: '14px'}}>Full Analysis</div>
-                          <div style={{fontSize: '12px', color: '#666'}}>Complete analysis report</div>
-                        </div>
-                        <span className="material-symbols-outlined" style={{color: '#999', fontSize: '18px'}}>open_in_new</span>
-                      </a>
-
-                      {/* Recent Failures */}
-                      <a 
-                        href="/api/logs/failures?limit=50" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '12px',
-                          padding: '12px 16px',
-                          background: '#f5f5f5',
-                          borderRadius: '8px',
-                          textDecoration: 'none',
-                          color: '#333',
-                          border: '1px solid #e0e0e0',
-                          transition: 'all 0.2s',
-                          cursor: 'pointer'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#ffebee';
-                          e.currentTarget.style.borderColor = '#d32f2f';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = '#f5f5f5';
-                          e.currentTarget.style.borderColor = '#e0e0e0';
-                        }}
-                      >
-                        <span className="material-symbols-outlined" style={{color: '#d32f2f', fontSize: '24px'}}>error</span>
-                        <div style={{flex: 1}}>
-                          <div style={{fontWeight: 500, fontSize: '14px'}}>Recent Failures</div>
-                          <div style={{fontSize: '12px', color: '#666'}}>Last 50 failed executions</div>
-                        </div>
-                        <span className="material-symbols-outlined" style={{color: '#999', fontSize: '18px'}}>open_in_new</span>
-                      </a>
-
-                      {/* Unfixed Failures */}
-                      <a 
-                        href="/api/logs/failures?unfixed_only=true" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '12px',
-                          padding: '12px 16px',
-                          background: '#f5f5f5',
-                          borderRadius: '8px',
-                          textDecoration: 'none',
-                          color: '#333',
-                          border: '1px solid #e0e0e0',
-                          transition: 'all 0.2s',
-                          cursor: 'pointer'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#fff3e0';
-                          e.currentTarget.style.borderColor = '#f57c00';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = '#f5f5f5';
-                          e.currentTarget.style.borderColor = '#e0e0e0';
-                        }}
-                      >
-                        <span className="material-symbols-outlined" style={{color: '#f57c00', fontSize: '24px'}}>warning</span>
-                        <div style={{flex: 1}}>
-                          <div style={{fontWeight: 500, fontSize: '14px'}}>Unfixed Failures</div>
-                          <div style={{fontSize: '12px', color: '#666'}}>Unresolved errors</div>
-                        </div>
-                        <span className="material-symbols-outlined" style={{color: '#999', fontSize: '18px'}}>open_in_new</span>
-                      </a>
-
-                      {/* Recent Successes */}
-                      <a 
-                        href="/api/logs/successes?limit=50" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '12px',
-                          padding: '12px 16px',
-                          background: '#f5f5f5',
-                          borderRadius: '8px',
-                          textDecoration: 'none',
-                          color: '#333',
-                          border: '1px solid #e0e0e0',
-                          transition: 'all 0.2s',
-                          cursor: 'pointer'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#e8f5e9';
-                          e.currentTarget.style.borderColor = '#388e3c';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = '#f5f5f5';
-                          e.currentTarget.style.borderColor = '#e0e0e0';
-                        }}
-                      >
-                        <span className="material-symbols-outlined" style={{color: '#388e3c', fontSize: '24px'}}>check_circle</span>
-                        <div style={{flex: 1}}>
-                          <div style={{fontWeight: 500, fontSize: '14px'}}>Recent Successes</div>
-                          <div style={{fontSize: '12px', color: '#666'}}>Last 50 successful executions</div>
-                        </div>
-                        <span className="material-symbols-outlined" style={{color: '#999', fontSize: '18px'}}>open_in_new</span>
-                      </a>
-
-                      {/* Error Patterns */}
-                      <a 
-                        href="/api/logs/error-patterns" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '12px',
-                          padding: '12px 16px',
-                          background: '#f5f5f5',
-                          borderRadius: '8px',
-                          textDecoration: 'none',
-                          color: '#333',
-                          border: '1px solid #e0e0e0',
-                          transition: 'all 0.2s',
-                          cursor: 'pointer'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#e8f4fd';
-                          e.currentTarget.style.borderColor = '#1976d2';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = '#f5f5f5';
-                          e.currentTarget.style.borderColor = '#e0e0e0';
-                        }}
-                      >
-                        <span className="material-symbols-outlined" style={{color: '#1976d2', fontSize: '24px'}}>troubleshoot</span>
-                        <div style={{flex: 1}}>
-                          <div style={{fontWeight: 500, fontSize: '14px'}}>Error Patterns</div>
-                          <div style={{fontSize: '12px', color: '#666'}}>Common error analysis</div>
-                        </div>
-                        <span className="material-symbols-outlined" style={{color: '#999', fontSize: '18px'}}>open_in_new</span>
-                      </a>
-
-                      {/* Recommendations */}
-                      <a 
-                        href="/api/logs/recommendations" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '12px',
-                          padding: '12px 16px',
-                          background: '#f5f5f5',
-                          borderRadius: '8px',
-                          textDecoration: 'none',
-                          color: '#333',
-                          border: '1px solid #e0e0e0',
-                          transition: 'all 0.2s',
-                          cursor: 'pointer'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#f3e5f5';
-                          e.currentTarget.style.borderColor = '#7b1fa2';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = '#f5f5f5';
-                          e.currentTarget.style.borderColor = '#e0e0e0';
-                        }}
-                      >
-                        <span className="material-symbols-outlined" style={{color: '#7b1fa2', fontSize: '24px'}}>lightbulb</span>
-                        <div style={{flex: 1}}>
-                          <div style={{fontWeight: 500, fontSize: '14px'}}>Recommendations</div>
-                          <div style={{fontSize: '12px', color: '#666'}}>AI improvement suggestions</div>
-                        </div>
-                        <span className="material-symbols-outlined" style={{color: '#999', fontSize: '18px'}}>open_in_new</span>
-                      </a>
-
-                      {/* AI Context */}
-                      <a 
-                        href="/api/logs/ai-context?max_examples=10" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '12px',
-                          padding: '12px 16px',
-                          background: '#f5f5f5',
-                          borderRadius: '8px',
-                          textDecoration: 'none',
-                          color: '#333',
-                          border: '1px solid #e0e0e0',
-                          transition: 'all 0.2s',
-                          cursor: 'pointer'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#e8f4fd';
-                          e.currentTarget.style.borderColor = '#1976d2';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = '#f5f5f5';
-                          e.currentTarget.style.borderColor = '#e0e0e0';
-                        }}
-                      >
-                        <span className="material-symbols-outlined" style={{color: '#1976d2', fontSize: '24px'}}>psychology</span>
-                        <div style={{flex: 1}}>
-                          <div style={{fontWeight: 500, fontSize: '14px'}}>AI Learning Context</div>
-                          <div style={{fontSize: '12px', color: '#666'}}>What the AI has learned</div>
-                        </div>
-                        <span className="material-symbols-outlined" style={{color: '#999', fontSize: '18px'}}>open_in_new</span>
-                      </a>
-                    </div>
-
-                    <div style={{marginTop: '16px', padding: '12px', background: '#e3f2fd', borderRadius: '8px', border: '1px solid #90caf9'}}>
-                      <div style={{display: 'flex', gap: '8px', alignItems: 'start'}}>
-                        <span className="material-symbols-outlined" style={{color: '#1976d2', fontSize: '20px'}}>info</span>
-                        <div style={{fontSize: '13px', color: '#0d47a1'}}>
-                          <strong>About Logging:</strong> The system automatically logs every script execution. 
-                          Click any link above to view logs in JSON format. For a better viewing experience, use a browser extension 
-                          like "JSON Viewer" or the CLI tool: <code style={{background: '#fff', padding: '2px 6px', borderRadius: '3px'}}>python analyze_logs.py summary</code>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Danger Zone */}
-                <div className="settings-section">
-                  <div className="md-card" style={{border: '1px solid #ffcdd2'}}>
-                    <h3 className="settings-section-title" style={{color: '#b71c1c'}}>
-                      <span className="material-symbols-outlined" style={{color: '#d32f2f', fontSize: '24px'}}>warning</span>
-                      Danger Zone
-                    </h3>
-                    <p className="settings-section-description">
-                      These actions permanently delete data and cannot be undone.
-                    </p>
-
-                    <div className="settings-info-box" style={{borderLeftColor: '#d32f2f'}}>
-                      <div className="settings-info-header" style={{color: '#b71c1c'}}>
-                        <span className="material-symbols-outlined" style={{color: '#d32f2f', fontSize: '20px'}}>delete_forever</span>
-                        <strong>Reset All User Data</strong>
-                      </div>
-                      <p style={{marginTop: '8px', marginBottom: '0', color: '#5f2120'}}>
-                        Deletes <strong>all user accounts</strong>, <strong>all user-saved scripts</strong>, and <strong>all user-uploaded images</strong>.
-                        Default templates and default library images are kept.
-                      </p>
-                    </div>
-
-                    <div style={{display: 'flex', justifyContent: 'flex-end', marginTop: '12px'}}>
-                      <button
-                        className="md-button md-button-outlined"
-                        onClick={handleResetAllUserData}
-                        title="Reset all user data (users, scripts, images)"
-                        style={{borderColor: '#d32f2f', color: '#d32f2f'}}
-                      >
-                        <span className="material-symbols-outlined" style={{fontSize: '18px'}}>delete_forever</span>
-                        Reset All User Data
+                        {changePasswordLoading ? 'Updating...' : 'Update password'}
                       </button>
                     </div>
                   </div>
                 </div>
+                )}
+
               </div>
             )}
 
@@ -5632,7 +5551,7 @@ if __name__ == "__main__":
                   <nav className="maps-help-nav">
                     <h3 style={{marginTop:0, marginBottom:'0.1rem', color: isDark ? '#f3f4f6' : '#111827'}}>Help & Getting Started</h3>
                     <p style={{fontSize:'0.8rem', marginTop:'0.25rem', color: isDark ? '#9ca3af' : '#6b7280'}}>
-                      Guidance for writing Python scripts that run in MAPS™ and the Helper App.
+                      MapsBridge v1.1.0 — Python scripts for MAPS™ and the Helper App (snake_case API).
                     </p>
 
                     <div className="help-nav-section">
@@ -5665,9 +5584,9 @@ if __name__ == "__main__":
                     </div>
 
                     <div className="help-nav-section">
-                      <div className="help-nav-section-title">Patterns</div>
+                      <div className="help-nav-section-title">API v1.1.0</div>
                       <ul className="help-nav-list">
-                        <li><a href="#helpers">Helper Functions</a></li>
+                        <li><a href="#helpers">Functions Reference</a></li>
                         <li><a href="#output">Sending Output to MAPS</a></li>
                         <li><a href="#coords">Coordinate Helpers</a></li>
                         <li><a href="#defaults">Default Parameters</a></li>
@@ -5711,8 +5630,8 @@ if __name__ == "__main__":
                               <strong>MapsBridge.py (Script Bridge)</strong> – a small Python "SDK" that defines the
                               contract between MAPS and your scripts. It:
                               <ul>
-                                <li>Reads requests (Tile Sets, Image Layers, parameters) from MAPS via <code>FromStdIn()</code></li>
-                                <li>Exposes metadata (tiles, channels, stage positions, resolutions)</li>
+                                <li>Reads requests (Tile Sets, Image Layers, parameters) from MAPS via <code>from_stdin()</code></li>
+                                <li>Exposes metadata (tiles, channels, stage positions, resolutions) using snake_case properties</li>
                                 <li>Provides functions to send images, annotations, notes, and files back into MAPS</li>
                               </ul>
                             </li>
@@ -5744,16 +5663,17 @@ if __name__ == "__main__":
                           </div>
                           <div className="help-card-body">
                             <p>
-                              <code>MapsBridge.py</code> is the Script Bridge module that every MAPS script imports:
+                              <code>MapsBridge.py</code> is the Script Bridge module (v1.1.0) that every MAPS script imports.
+                              All properties and functions use <strong>snake_case</strong>:
                             </p>
                             <pre><code>{`import MapsBridge
 
-request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-tileSet = request.SourceTileSet`}</code></pre>
+request = MapsBridge.ScriptTileSetRequest.from_stdin()
+source_tile_set = request.source_tile_set`}</code></pre>
                             <p>
                               It defines the core data types (<code>TileSetInfo</code>, <code>ImageLayerInfo</code>, etc.)
-                              and functions such as <code>CreateImageLayer</code>, <code>SendSingleTileOutput</code>,
-                              <code>CreateAnnotation</code>, and more.
+                              and functions such as <code>create_image_layer</code>, <code>send_single_tile_output</code>,
+                              <code>create_annotation</code>, <code>get_tile_info</code>, and more.
                             </p>
                             <p>
                               Your scripts should always talk to MAPS through these APIs, never by guessing file paths
@@ -5794,8 +5714,8 @@ tileSet = request.SourceTileSet`}</code></pre>
                     <div className="help-callout" style={{marginTop: '24px'}}>
                       <strong>📚 Full Documentation:</strong> This is a condensed overview. Scroll down or use the navigation on the left to explore detailed sections including:
                       <ul style={{marginTop: '8px', marginBottom: 0}}>
-                        <li>Core Concepts & Quick Start Template</li>
-                        <li>Helper Functions & Coordinate Helpers</li>
+                        <li>Core Concepts & Quick Start Template (v1.1.0 snake_case)</li>
+                        <li>MapsBridge v1.1.0 Functions & Coordinate Helpers</li>
                         <li>Common Patterns & Troubleshooting</li>
                         <li>AI Workflow & Best Practices</li>
                       </ul>
@@ -5812,7 +5732,7 @@ tileSet = request.SourceTileSet`}</code></pre>
                             <span className="help-badge">Required</span>
                           </div>
                           <div className="help-card-body">
-                            <p>Every script starts by reading a request from standard input via MapsBridge:</p>
+                            <p>Every script starts by reading a request from standard input via MapsBridge (v1.1.0 snake_case):</p>
                             <ul>
                               <li><code>ScriptTileSetRequest</code> – process tiles in a tile set</li>
                               <li><code>ScriptImageLayerRequest</code> – process a stitched image layer</li>
@@ -5821,12 +5741,12 @@ tileSet = request.SourceTileSet`}</code></pre>
                             <pre><code>{`import MapsBridge
 
 # Tile set script
-request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-tileSet = request.SourceTileSet
+request = MapsBridge.ScriptTileSetRequest.from_stdin()
+source_tile_set = request.source_tile_set
 
 # Image layer script
-request = MapsBridge.ScriptImageLayerRequest.FromStdIn()
-layer = request.SourceImageLayer`}</code></pre>
+request = MapsBridge.ScriptImageLayerRequest.from_stdin()
+source_layer = request.source_image_layer`}</code></pre>
                           </div>
                         </div>
 
@@ -5837,7 +5757,7 @@ layer = request.SourceImageLayer`}</code></pre>
                           <div className="help-card-body">
                             <ul>
                               <li>
-                                <strong>Helper App:</strong> Simulates MAPS, feeds JSON into your script, places images
+                                <strong>Helper App:</strong> Simulates MAPS, feeds JSON into your script via <code>from_stdin()</code>, places images
                                 in an input folder, and captures outputs for preview.
                               </li>
                               <li>
@@ -5885,8 +5805,8 @@ layer = request.SourceImageLayer`}</code></pre>
                             </tr>
                             <tr>
                               <td>Images accessed via</td>
-                              <td><code>tileInfo.ImageFileNames["0"]</code> + DataFolderPath</td>
-                              <td><code>request.PreparedImages["0"]</code></td>
+                              <td><code>tile_info.image_file_names["0"]</code> + <code>data_folder_path</code></td>
+                              <td><code>request.prepared_images["0"]</code></td>
                             </tr>
                             <tr>
                               <td>Typical usage</td>
@@ -5901,51 +5821,53 @@ layer = request.SourceImageLayer`}</code></pre>
                     {/* QUICK START */}
                     <section id="quick-start">
                       <h2>Quick Start Script Template</h2>
-                      <p>This is a recommended starting template for a single-tile processing script.</p>
+                      <p>This is a recommended starting template for a single-tile processing script using MapsBridge v1.1.0.</p>
 
-                      <pre><code>{`import MapsBridge
+                      <pre><code>{`import os
+import tempfile
+import MapsBridge
 from PIL import Image
-import os
 
 def main():
     # Read request (Tile Set, single-tile mode)
-    request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-    tileSet = request.SourceTileSet
+    request = MapsBridge.ScriptTileSetRequest.from_stdin()
+    source_tile_set = request.source_tile_set
+    tile_to_process = request.tiles_to_process[0]
 
-    # Resolve tile + TileInfo + path for channel "0"
-    tile, tileInfo, input_path = MapsBridge.ResolveSingleTileAndPath(request, "0")
+    # Get tile info and build input path
+    tile_info = MapsBridge.get_tile_info(
+        tile_to_process.column, tile_to_process.row, source_tile_set
+    )
+    tile_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, tile_filename)
 
-    MapsBridge.LogInfo(f"Processing tile [{tile.Row}, {tile.Column}]")
+    MapsBridge.log_info(f"Processing tile [{tile_info.column}, {tile_info.row}]")
 
     # Load and process image
     img = Image.open(input_path)
     out_img = img  # TODO: replace with your logic
 
     # Save output to a temp folder
-    out_dir = MapsBridge.GetTempOutputFolder("my_script")
-    out_path = os.path.join(out_dir, "result.png")
-    out_img.save(out_path)
+    output_folder = os.path.join(tempfile.gettempdir(), "my_script_output")
+    os.makedirs(output_folder, exist_ok=True)
+    output_path = os.path.join(output_folder, "result.png")
+    out_img.save(output_path)
 
-    # Create/reuse output tile set & channel "Processed"
-    outInfo = MapsBridge.GetDefaultOutputTileSetAndChannel(
-        sourceTileSet=tileSet,
-        channelName="Processed",
-        channelColor=(255, 0, 0),
-        isAdditive=True,
-        targetLayerGroupName="Outputs"
+    # Create/reuse output tile set & channel
+    output_info = MapsBridge.get_or_create_output_tile_set(
+        "Results for " + source_tile_set.name,
+        target_layer_group_name="Outputs"
     )
+    MapsBridge.create_channel("Processed", (255, 0, 0), True, output_info.tile_set.guid)
 
     # Send result back into MAPS
-    MapsBridge.SendSingleTileOutput(
-        tileRow=tile.Row,
-        tileColumn=tile.Column,
-        targetChannelName="Processed",
-        imageFilePath=out_path,
-        keepFile=True,
-        targetTileSetGuid=outInfo.TileSet.Guid
+    MapsBridge.send_single_tile_output(
+        tile_info.row, tile_info.column,
+        "Processed", output_path, True,
+        output_info.tile_set.guid
     )
 
-    MapsBridge.LogInfo("Done!")
+    MapsBridge.log_info("Done!")
 
 if __name__ == "__main__":
     main()`}</code></pre>
@@ -5953,50 +5875,87 @@ if __name__ == "__main__":
 
                     {/* HELPERS */}
                     <section id="helpers">
-                      <h2>MapsBridge Helper Functions</h2>
+                      <h2>MapsBridge v1.1.0 Functions</h2>
                       <p>
-                        Your updated <code>MapsBridge.py</code> includes several helper functions designed to remove
-                        boilerplate and reduce errors in scripts.
+                        MapsBridge v1.1.0 provides a rich set of functions for tile set output, image layers,
+                        annotations, coordinate transforms, logging, and more. All use <strong>snake_case</strong>.
                       </p>
 
-                      <h3>Single-tile resolution</h3>
-                      <pre><code>{`# Returns (Tile, TileInfo, image_path) for channel "0"
-tile, tileInfo, input_path = MapsBridge.ResolveSingleTileAndPath(request, "0")`}</code></pre>
+                      <h3>Reading requests</h3>
+                      <pre><code>{`# Tile set request
+request = MapsBridge.ScriptTileSetRequest.from_stdin()
+source_tile_set = request.source_tile_set
 
-                      <h3>Batch iteration helpers</h3>
-                      <pre><code>{`# Iterate over ALL tiles in a TileSet
-for tileInfo, path in MapsBridge.IterTileInfosWithPath(tileSet, "0"):
+# Image layer request
+request = MapsBridge.ScriptImageLayerRequest.from_stdin()
+source_layer = request.source_image_layer
+
+# Auto-detect request type
+request = MapsBridge.read_request_from_stdin()`}</code></pre>
+
+                      <h3>Tile lookup &amp; image path</h3>
+                      <pre><code>{`# Get TileInfo for a specific tile
+tile_info = MapsBridge.get_tile_info(tile.column, tile.row, source_tile_set)
+
+# Build input image path
+tile_filename = tile_info.image_file_names["0"]
+input_path = os.path.join(source_tile_set.data_folder_path, tile_filename)`}</code></pre>
+
+                      <h3>Batch iteration (manual loop)</h3>
+                      <pre><code>{`# Iterate over all tiles in a tile set
+for tile_info in source_tile_set.tiles:
+    tile_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, tile_filename)
     ...
 
-# Iterate only over TilesToProcess in a ScriptTileSetRequest
-for tile, tileInfo, path in MapsBridge.IterTilesToProcessWithPath(request, "0"):
+# Iterate only over tiles_to_process
+for tile_to_process in request.tiles_to_process:
+    tile_info = MapsBridge.get_tile_info(
+        tile_to_process.column, tile_to_process.row, source_tile_set
+    )
     ...`}</code></pre>
 
-                      <h3>Image layer helper</h3>
-                      <pre><code>{`# For ScriptImageLayerRequest
-path = MapsBridge.GetPreparedImagePath(request, "0")`}</code></pre>
+                      <h3>Image layer access</h3>
+                      <pre><code>{`# For ScriptImageLayerRequest — access prepared image directly
+input_path = request.prepared_images["0"]`}</code></pre>
 
                       <h3>Script parameter parsing</h3>
-                      <pre><code>{`options = MapsBridge.ParseScriptParameters(request.ScriptParameters)
+                      <pre><code>{`# Parse script_parameters (from default parameters block)
+import json
+params = request.script_parameters  # string from stdin
 
 # JSON example:
-#   "{ "sigma": 5, "threshold": 0.8 }"
-# key/value example:
-#   "sigma=5; threshold=0.8; mode=fast"
+try:
+    options = json.loads(params)
+except:
+    options = {}
 
 sigma = float(options.get("sigma", 5))`}</code></pre>
 
-                      <h3>Standard temp output folder</h3>
-                      <pre><code>{`out_dir = MapsBridge.GetTempOutputFolder("MyScript")`}</code></pre>
+                      <h3>Temp output folder</h3>
+                      <pre><code>{`import tempfile
+output_folder = os.path.join(tempfile.gettempdir(), "my_script_output")
+os.makedirs(output_folder, exist_ok=True)`}</code></pre>
 
-                      <h3>Default output tile set & channel</h3>
-                      <pre><code>{`outInfo = MapsBridge.GetDefaultOutputTileSetAndChannel(
-    sourceTileSet=tileSet,
-    channelName="Processed",
-    channelColor=(255, 0, 0),
-    isAdditive=True,
-    targetLayerGroupName="Outputs"
-)`}</code></pre>
+                      <h3>Create output tile set &amp; channel</h3>
+                      <pre><code>{`output_info = MapsBridge.get_or_create_output_tile_set(
+    "Results for " + source_tile_set.name,
+    target_layer_group_name="Outputs"
+)
+MapsBridge.create_channel("Processed", (255, 0, 0), True, output_info.tile_set.guid)`}</code></pre>
+
+                      <h3>Logging &amp; progress</h3>
+                      <pre><code>{`MapsBridge.log_info("Processing started")
+MapsBridge.log_warning("Low contrast detected")
+MapsBridge.log_error("Failed to load image")
+MapsBridge.report_progress(50.0)          # 0.0 – 100.0
+MapsBridge.report_activity_description("Analyzing tile 5 of 20")
+MapsBridge.report_failure("Fatal error")  # terminates script`}</code></pre>
+
+                      <h3>Layer info lookup</h3>
+                      <pre><code>{`layer_info = MapsBridge.get_layer_info("My Layer Name", request_full_info=True)
+if layer_info.layer_exists:
+    MapsBridge.log_info(f"Found layer: {layer_info.name}")`}</code></pre>
                     </section>
 
                     {/* OUTPUT */}
@@ -6004,60 +5963,60 @@ sigma = float(options.get("sigma", 5))`}</code></pre>
                       <h2>Sending Output Back to MAPS</h2>
 
                       <h3>Tile output</h3>
-                      <pre><code>{`MapsBridge.SendSingleTileOutput(
-    tileRow=tile.Row,
-    tileColumn=tile.Column,
-    targetChannelName="Processed",
-    imageFilePath=output_path,
-    keepFile=True,
-    targetTileSetGuid=outputTileSet.Guid  # or None for source tile set
+                      <pre><code>{`MapsBridge.send_single_tile_output(
+    tile_row=tile_info.row,
+    tile_column=tile_info.column,
+    target_channel_name="Processed",
+    image_file_path=output_path,
+    keep_file=True,
+    target_tile_set_guid=output_info.tile_set.guid
 )`}</code></pre>
 
                       <h3>Create or reuse an Output Tile Set</h3>
-                      <pre><code>{`outInfo = MapsBridge.GetOrCreateOutputTileSet(
-    tileSetName="Results for " + tileSet.Name,
-    targetLayerGroupName="Outputs"
+                      <pre><code>{`output_info = MapsBridge.get_or_create_output_tile_set(
+    tile_set_name="Results for " + source_tile_set.name,
+    target_layer_group_name="Outputs"
 )`}</code></pre>
 
                       <h3>Create channels</h3>
-                      <pre><code>{`MapsBridge.CreateChannel(
+                      <pre><code>{`MapsBridge.create_channel(
     "Processed",
     (255, 0, 0),
     True,
-    outInfo.TileSet.Guid
+    output_info.tile_set.guid
 )`}</code></pre>
 
                       <h3>Create a new image layer</h3>
-                      <pre><code>{`MapsBridge.CreateImageLayer(
-    "Processed " + layer.Name,
-    imageFilePath=output_path,
-    targetLayerGroupName="Outputs",
-    keepFile=True
+                      <pre><code>{`MapsBridge.create_image_layer(
+    "Processed " + source_layer.name,
+    image_file_path=output_path,
+    target_layer_group_name="Outputs",
+    keep_file=True
 )`}</code></pre>
 
                       <h3>Annotations</h3>
-                      <pre><code>{`MapsBridge.CreateAnnotation(
+                      <pre><code>{`MapsBridge.create_annotation(
     "Feature_001",
-    stagePosition=(0.001, 0.002, 0),
+    stage_position=(0.001, 0.002, 0),
     size=("10um", "5um"),
     color=(0, 255, 0),
     notes="Region of interest",
-    targetLayerGroupName="Annotations"
+    target_layer_group_name="Annotations"
 )`}</code></pre>
 
                       <h3>Notes and files</h3>
                       <pre><code>{`# Append notes to a layer/tile set
-MapsBridge.AppendNotes(
+MapsBridge.append_notes(
     "Processed tile [1, 1]\\r\\n",
-    targetLayerGuid=outInfo.TileSet.Guid
+    target_layer_guid=output_info.tile_set.guid
 )
 
 # Store a report or arbitrary file
-MapsBridge.StoreFile(
+MapsBridge.store_file(
     "C:\\\\analysis\\\\report.pdf",
     overwrite=True,
-    keepFile=True,
-    targetLayerGuid=outInfo.TileSet.Guid
+    keep_file=True,
+    target_layer_guid=output_info.tile_set.guid
 )`}</code></pre>
                     </section>
 
@@ -6070,15 +6029,27 @@ MapsBridge.StoreFile(
                       </p>
 
                       <h3>Tile pixel → stage</h3>
-                      <pre><code>{`stagePos = MapsBridge.TilePixelToStage(
-    pixelX, pixelY,
-    tile.Column, tile.Row,
-    tileSet
+                      <pre><code>{`stage_pos = MapsBridge.tile_pixel_to_stage(
+    pixel_x, pixel_y,
+    tile_info.column, tile_info.row,
+    source_tile_set
 )
-# stagePos.X, stagePos.Y in stage units`}</code></pre>
+# stage_pos.x, stage_pos.y in stage units`}</code></pre>
 
                       <h3>Image layer pixel → stage</h3>
-                      <pre><code>{`stagePos = MapsBridge.ImagePixelToStage(pixelX, pixelY, imageLayer)`}</code></pre>
+                      <pre><code>{`stage_pos = MapsBridge.image_pixel_to_stage(pixel_x, pixel_y, source_layer)`}</code></pre>
+
+                      <h3>Total pixel position</h3>
+                      <pre><code>{`total_pixel = MapsBridge.calculate_total_pixel_position(
+    pixel_x, pixel_y,
+    tile_info.column, tile_info.row,
+    source_tile_set
+)
+# total_pixel.x, total_pixel.y — pixel offset in full mosaic`}</code></pre>
+
+                      <h3>Tile info lookup</h3>
+                      <pre><code>{`tile_info = MapsBridge.get_tile_info(column, row, source_tile_set)
+# Returns TileInfo with: column, row, stage_position, image_file_names, etc.`}</code></pre>
                     </section>
 
                     {/* DEFAULT PARAMS */}
@@ -6099,8 +6070,8 @@ MapsBridge.StoreFile(
 # Default parameters end`}</code></pre>
 
                       <p>
-                        The <code>ScriptParameters</code> field is a free-form string that your script can parse using
-                        <code> MapsBridge.ParseScriptParameters()</code> (JSON or <code>key=value</code> notation).
+                        The <code>ScriptParameters</code> field becomes <code>request.script_parameters</code> in your script —
+                        a free-form string you can parse with <code>json.loads()</code> or custom logic.
                       </p>
                     </section>
 
@@ -6137,9 +6108,9 @@ MapsBridge.StoreFile(
                           <div className="help-card-body">
                             <ul>
                               <li>JSON payloads sent from MAPS to your script.</li>
-                              <li>Standard input / output wiring with <code>FromStdIn()</code>.</li>
-                              <li>DataFolderPath and PreparedImages behavior.</li>
-                              <li>Logging via <code>LogInfo</code>, <code>LogWarning</code>, and <code>LogError</code>.</li>
+                              <li>Standard input / output wiring with <code>from_stdin()</code>.</li>
+                              <li><code>data_folder_path</code> and <code>prepared_images</code> behavior.</li>
+                              <li>Logging via <code>log_info</code>, <code>log_warning</code>, and <code>log_error</code>.</li>
                               <li>Output actions: tile output, layer creation, annotations, notes, and stored files.</li>
                             </ul>
                             <div className="help-callout warn">
@@ -6178,13 +6149,13 @@ MapsBridge.StoreFile(
                               <strong>"Create a single-tile script that thresholds SE images and outputs a binary mask in a new channel."</strong>
                             </li>
                             <li>
-                              <strong>"Refactor this older script to use ResolveSingleTileAndPath and GetDefaultOutputTileSetAndChannel."</strong>
+                              <strong>"Refactor this older script to use get_tile_info and get_or_create_output_tile_set."</strong>
                             </li>
                             <li>
-                              <strong>"Add batch processing to this script using IterTilesToProcessWithPath."</strong>
+                              <strong>"Add batch processing to this script by iterating over tiles_to_process."</strong>
                             </li>
                             <li>
-                              <strong>"Explain how TilePixelToStage is converting pixel coordinates in this code."</strong>
+                              <strong>"Explain how tile_pixel_to_stage is converting pixel coordinates in this code."</strong>
                             </li>
                           </ul>
                           <p>
@@ -6258,8 +6229,8 @@ MapsBridge.StoreFile(
 
                       <div className="help-callout warn">
                         <strong>Important:</strong> Scripts cannot access your local file system directly. Always use
-                        MapsBridge helper functions like <code>ResolveSingleTileAndPath()</code> and <code>GetTempOutputFolder()</code>
-                        to work with files.
+                        MapsBridge functions like <code>get_tile_info()</code> and tile set paths from
+                        <code>source_tile_set.data_folder_path</code> to work with files.
                       </div>
 
                       <h3>Stopping a running script</h3>
@@ -6282,7 +6253,7 @@ MapsBridge.StoreFile(
                         <div className="help-card-body">
                           <p>The console shows all text output from your script:</p>
                           <ul>
-                            <li><code>MapsBridge.LogInfo()</code>, <code>LogWarning()</code>, <code>LogError()</code> messages</li>
+                            <li><code>MapsBridge.log_info()</code>, <code>log_warning()</code>, <code>log_error()</code> messages</li>
                             <li>Python <code>print()</code> statements</li>
                             <li>Error messages and stack traces</li>
                             <li>Execution status ("Running...", "Script completed successfully", "Script failed")</li>
@@ -6300,7 +6271,7 @@ MapsBridge.StoreFile(
                           <p>Images are displayed in a grid layout:</p>
                           <ul>
                             <li><strong>Original Image:</strong> Your input test image (shown for reference)</li>
-                            <li><strong>Result Images:</strong> Any images created by your script via <code>SendSingleTileOutput()</code> or <code>CreateImageLayer()</code></li>
+                            <li><strong>Result Images:</strong> Any images created by your script via <code>send_single_tile_output()</code> or <code>create_image_layer()</code></li>
                           </ul>
                           <p>
                             <strong>Image Viewer:</strong> Click on any image to open the full-size viewer with:
@@ -6324,7 +6295,7 @@ MapsBridge.StoreFile(
                             <li>JSON files (structured data)</li>
                             <li>TXT files (reports, logs)</li>
                             <li>PDF files (documents)</li>
-                            <li>Any other files created via <code>StoreFile()</code></li>
+                            <li>Any other files created via <code>store_file()</code></li>
                           </ul>
                           <p>Click on a file icon to download it to your computer.</p>
                         </div>
@@ -6339,8 +6310,8 @@ MapsBridge.StoreFile(
 
                       <div className="help-callout error">
                         <strong>Common error: FileNotFoundError</strong><br />
-                        The image path is incorrect. Use MapsBridge helpers like <code>ResolveSingleTileAndPath()</code>
-                        instead of hardcoded paths.
+                        The image path is incorrect. Use <code>get_tile_info()</code> and build paths from
+                        <code>source_tile_set.data_folder_path</code> instead of hardcoded paths.
                       </div>
 
                       <div className="help-callout warn">
@@ -6446,7 +6417,7 @@ MapsBridge.StoreFile(
                             <ul>
                               <li><strong>New/unsaved script:</strong> Opens save dialog to create a new script</li>
                               <li><strong>Your saved script:</strong> Updates the existing script immediately (no dialog)</li>
-                              <li><strong>Default template:</strong> Opens save dialog to save as a new script</li>
+                              <li><strong>Starter script:</strong> Opens save dialog to save as a new script</li>
                             </ul>
                           </div>
                         </div>
@@ -6498,7 +6469,7 @@ MapsBridge.StoreFile(
                         </div>
                         <div className="help-card-body">
                           <ol>
-                            <li>Go to <strong>Scripts</strong> tab → <strong>Default Templates</strong></li>
+                            <li>Go to <strong>Scripts</strong> tab → <strong>Starter Scripts</strong></li>
                             <li>Click on a template that matches your needs</li>
                             <li>Modify the code in the <strong>Python</strong> tab</li>
                             <li>Click <strong>Save Script</strong> to save to My Scripts</li>
@@ -6575,32 +6546,41 @@ MapsBridge.StoreFile(
                       <h2>Common Patterns</h2>
 
                       <h3>Single-tile processing</h3>
-                      <pre><code>{`request = MapsBridge.ScriptTileSetRequest.FromStdIn()
-tile, tileInfo, path = MapsBridge.ResolveSingleTileAndPath(request, "0")`}</code></pre>
+                      <pre><code>{`request = MapsBridge.ScriptTileSetRequest.from_stdin()
+source_tile_set = request.source_tile_set
+tile_to_process = request.tiles_to_process[0]
+tile_info = MapsBridge.get_tile_info(tile_to_process.column, tile_to_process.row, source_tile_set)
+input_path = os.path.join(source_tile_set.data_folder_path, tile_info.image_file_names["0"])`}</code></pre>
 
                       <h3>Batch tile processing (all tiles)</h3>
-                      <pre><code>{`tileSet = request.SourceTileSet
-for tileInfo, path in MapsBridge.IterTileInfosWithPath(tileSet, "0"):
+                      <pre><code>{`source_tile_set = request.source_tile_set
+for tile_info in source_tile_set.tiles:
+    tile_filename = tile_info.image_file_names["0"]
+    input_path = os.path.join(source_tile_set.data_folder_path, tile_filename)
     ...`}</code></pre>
 
-                      <h3>Batch tile processing (TilesToProcess only)</h3>
-                      <pre><code>{`for tile, tileInfo, path in MapsBridge.IterTilesToProcessWithPath(request, "0"):
+                      <h3>Batch tile processing (tiles_to_process only)</h3>
+                      <pre><code>{`for tile_to_process in request.tiles_to_process:
+    tile_info = MapsBridge.get_tile_info(
+        tile_to_process.column, tile_to_process.row, source_tile_set
+    )
+    input_path = os.path.join(source_tile_set.data_folder_path, tile_info.image_file_names["0"])
     ...`}</code></pre>
 
                       <h3>Stitched Image Layer</h3>
-                      <pre><code>{`request = MapsBridge.ScriptImageLayerRequest.FromStdIn()
-layer = request.SourceImageLayer
-path = MapsBridge.GetPreparedImagePath(request, "0")`}</code></pre>
+                      <pre><code>{`request = MapsBridge.ScriptImageLayerRequest.from_stdin()
+source_layer = request.source_image_layer
+input_path = request.prepared_images["0"]`}</code></pre>
 
                       <h3>Scheduling new acquisitions</h3>
-                      <pre><code>{`MapsBridge.CreateTileSet(
+                      <pre><code>{`MapsBridge.create_tile_set(
     "New Acquisition",
-    stagePosition=(tile.StagePosition.X, tile.StagePosition.Y, tileSet.Rotation),
-    totalSize=("30um", "20um"),
-    tileHfw="5um",
-    pixelSize="4nm",
-    scheduleAcquisition=True,
-    targetLayerGroupName="New Acquisitions"
+    stage_position=(tile_info.stage_position.x, tile_info.stage_position.y, source_tile_set.rotation),
+    total_size=("30um", "20um"),
+    tile_hfw="5um",
+    pixel_size="4nm",
+    schedule_acquisition=True,
+    target_layer_group_name="New Acquisitions"
 )`}</code></pre>
                     </section>
 
@@ -6611,24 +6591,32 @@ path = MapsBridge.GetPreparedImagePath(request, "0")`}</code></pre>
                       <div className="help-callout error">
                         <strong>1. Using integer channel indices.</strong><br />
                         Always use string keys:
-                        <code> ImageFileNames["0"]</code>, <code>PreparedImages["0"]</code> — never <code>0</code> without quotes.
+                        <code> image_file_names["0"]</code>, <code>prepared_images["0"]</code> — never <code>0</code> without quotes.
                       </div>
 
                       <div className="help-callout warn">
                         <strong>2. Hardcoding input/output paths.</strong><br />
-                        Use the paths given by MapsBridge (DataFolderPath, PreparedImages) and
-                        <code> GetTempOutputFolder()</code> rather than manual paths.
+                        Use the paths given by MapsBridge (<code>data_folder_path</code>, <code>prepared_images</code>) and
+                        <code> tempfile.gettempdir()</code> rather than manual paths.
                       </div>
 
                       <div className="help-callout warn">
                         <strong>3. Forgetting to create a channel before sending output.</strong><br />
-                        <code>SendSingleTileOutput</code> will not create the channel automatically.
+                        <code>send_single_tile_output</code> will not create the channel automatically.
+                        Call <code>create_channel()</code> first.
+                      </div>
+
+                      <div className="help-callout error">
+                        <strong>4. Using old PascalCase API.</strong><br />
+                        MapsBridge v1.1.0 uses snake_case: <code>from_stdin()</code> not <code>FromStdIn()</code>,
+                        <code> source_tile_set</code> not <code>SourceTileSet</code>,
+                        <code> log_info()</code> not <code>LogInfo()</code>.
                       </div>
 
                       <div className="help-callout">
-                        <strong>4. Not using helpers.</strong><br />
-                        Helpers like <code>ResolveSingleTileAndPath</code> and
-                        <code> GetDefaultOutputTileSetAndChannel</code> encode best practices and reduce mistakes.
+                        <strong>5. Using get_tile_info and coordinate helpers.</strong><br />
+                        Functions like <code>get_tile_info</code>, <code>tile_pixel_to_stage</code>, and
+                        <code> get_or_create_output_tile_set</code> encode best practices and reduce mistakes.
                       </div>
                     </section>
 
@@ -6636,41 +6624,48 @@ path = MapsBridge.GetPreparedImagePath(request, "0")`}</code></pre>
                     <section id="troubleshooting">
                       <h2>Troubleshooting</h2>
 
-                      <h3>"Tile not found" when using TilePixelToStage or helpers</h3>
+                      <h3>"Tile not found" when using tile_pixel_to_stage or get_tile_info</h3>
                       <p>
-                        Make sure the <code>tile.Column</code> and <code>tile.Row</code> values you pass actually exist
-                        in the <code>TileSetInfo.Tiles</code> list. If you manually construct a <code>Tile</code>, ensure
+                        Make sure the <code>tile_column</code> and <code>tile_row</code> values you pass actually exist
+                        in the <code>source_tile_set.tiles</code> list. If you manually construct a <code>Tile</code>, ensure
                         the indices match the source tile set.
                       </p>
 
                       <h3>"No prepared image for channel '0'"</h3>
                       <p>
                         For image layer scripts, you must have <code>"PrepareImages": true</code> in the default parameters.
-                        The helper will raise a <code>KeyError</code> if the channel is missing.
+                        Accessing <code>request.prepared_images["0"]</code> will raise a <code>KeyError</code> if the channel is missing.
                       </p>
 
                       <h3>Output tile set is None</h3>
                       <p>
-                        This indicates that MAPS or the Helper App failed to create or locate the tile set. Check logs
-                        from the host application for more information.
+                        This indicates that MAPS or the Helper App failed to create or locate the tile set. Check
+                        <code> output_info.is_success</code> and <code>output_info.error_message</code> for details.
+                      </p>
+
+                      <h3>AttributeError with old PascalCase names</h3>
+                      <p>
+                        If you see errors like <code>AttributeError: 'ScriptTileSetRequest' has no attribute 'SourceTileSet'</code>,
+                        you're using the old API. Update to v1.1.0 snake_case: <code>source_tile_set</code>, <code>from_stdin()</code>, etc.
                       </p>
                     </section>
 
                     {/* WHY HELPERS */}
                     <section id="why-helpers">
-                      <h2>Why Use Helper Functions?</h2>
+                      <h2>Why Use MapsBridge Functions?</h2>
                       <p>
-                        The convenience helpers in <code>MapsBridge.py</code> are designed to:
+                        The functions in <code>MapsBridge.py</code> v1.1.0 are designed to:
                       </p>
                       <ul>
-                        <li>Eliminate repetitive boilerplate (path construction, tile lookups)</li>
+                        <li>Eliminate repetitive boilerplate (path construction, tile lookups via <code>get_tile_info()</code>)</li>
                         <li>Enforce best practices (string channel keys, correct tile resolution)</li>
-                        <li>Make scripts shorter, clearer, and easier to maintain</li>
+                        <li>Provide coordinate transforms (<code>tile_pixel_to_stage()</code>, <code>image_pixel_to_stage()</code>)</li>
+                        <li>Handle output creation with confirmation results (<code>get_or_create_output_tile_set()</code>)</li>
                         <li>Help AI-based script generators produce correct code more reliably</li>
                       </ul>
                       <p>
                         For small one-off scripts, the core API is enough. For any script used repeatedly or shared across
-                        teams, helpers give you consistency and fewer bugs.
+                        teams, the full API gives you consistency and fewer bugs.
                       </p>
                     </section>
                   </main>
@@ -6705,7 +6700,7 @@ path = MapsBridge.GetPreparedImagePath(request, "0")`}</code></pre>
                 className="new-chat-button"
                 onClick={() => {
                   setMessages([]);
-                  setAiModel('gemini-2.5-flash-lite'); // Reset to default model
+                  setAiModel('codex-mini-latest'); // Reset to default model
                   // Clear code editor
                   if (monacoEditorRef.current) {
                     monacoEditorRef.current.setValue('');
@@ -6722,30 +6717,66 @@ path = MapsBridge.GetPreparedImagePath(request, "0")`}</code></pre>
             </div>
           </div>
           <div className="assistant-settings-panel">
-            <label htmlFor="ai-model-select" className="assistant-settings-label">AI Model</label>
-            <select
-              id="ai-model-select"
-              className="assistant-settings-select"
-              value={aiModel}
-              onChange={(e) => handleModelChange(e.target.value)}
-            >
-              <optgroup label="Google Gemini">
-                <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (fast)</option>
-                <option value="gemini-2.5-pro">gemini-2.5-pro (best quality)</option>
-              </optgroup>
-              <optgroup label="OpenAI">
-                <option value="gpt-5-nano">gpt-5-nano</option>
-                <option value="gpt-5-mini">gpt-5-mini</option>
-                <option value="gpt-5">gpt-5</option>
-                <option value="gpt-5.1">gpt-5.1</option>
-                <option value="gpt-5.2">gpt-5.2</option>
-                <option value="gpt-5.1-codex-mini">gpt-5.1-codex-mini</option>
-                <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-                <option value="gpt-4.1">gpt-4.1</option>
-                <option value="gpt-4o-mini">gpt-4o-mini</option>
-                <option value="gpt-4o">gpt-4o</option>
-              </optgroup>
-            </select>
+            <label className="assistant-settings-label">AI Model</label>
+            <div className="model-dropdown-container">
+              <button
+                className="model-dropdown-trigger"
+                onClick={() => setShowModelDropdown(prev => !prev)}
+                onBlur={() => setTimeout(() => setShowModelDropdown(false), 150)}
+              >
+                <span className="model-dropdown-selected">
+                  <span className="material-symbols-outlined model-icon" style={{fontSize: '16px'}}>
+                    {({'codex-mini-latest':'code','gpt-5.2-codex':'integration_instructions','gpt-5-nano':'bolt','gpt-5-mini':'speed','gpt-5':'smart_toy','gpt-4.1':'psychology','gpt-5.1':'auto_awesome','gemini-2.5-flash-lite':'flash_on','gemini-2.5-pro':'diamond'})[aiModel] || 'smart_toy'}
+                  </span>
+                  {aiModel}
+                </span>
+                <span className="material-symbols-outlined" style={{fontSize: '18px', color: '#666'}}>expand_more</span>
+              </button>
+              {showModelDropdown && (
+                <div className="model-dropdown-menu">
+                  <div className="model-dropdown-group-label">OpenAI</div>
+                  {[
+                    {value: 'codex-mini-latest', icon: 'code', label: 'codex-mini-latest', desc: 'Optimized for code'},
+                    {value: 'gpt-5.2-codex', icon: 'integration_instructions', label: 'gpt-5.2-codex', desc: 'Latest codex'},
+                    {value: 'gpt-5-nano', icon: 'bolt', label: 'gpt-5-nano', desc: 'Ultra fast'},
+                    {value: 'gpt-5-mini', icon: 'speed', label: 'gpt-5-mini', desc: 'Fast & capable'},
+                    {value: 'gpt-5', icon: 'smart_toy', label: 'gpt-5', desc: 'Full power'},
+                    {value: 'gpt-4.1', icon: 'psychology', label: 'gpt-4.1', desc: 'Reliable'},
+                    {value: 'gpt-5.1', icon: 'auto_awesome', label: 'gpt-5.1', desc: 'Advanced'},
+                  ].map(m => (
+                    <button
+                      key={m.value}
+                      className={`model-dropdown-item ${aiModel === m.value ? 'selected' : ''}`}
+                      onMouseDown={(e) => { e.preventDefault(); handleModelChange(m.value); setShowModelDropdown(false); }}
+                    >
+                      <span className="material-symbols-outlined model-icon" style={{fontSize: '18px'}}>{m.icon}</span>
+                      <div className="model-dropdown-item-text">
+                        <span className="model-dropdown-item-name">{m.label}</span>
+                        <span className="model-dropdown-item-desc">{m.desc}</span>
+                      </div>
+                      {aiModel === m.value && <span className="material-symbols-outlined" style={{fontSize: '16px', color: '#1976d2', marginLeft: 'auto'}}>check</span>}
+                    </button>
+                  ))}
+                  <div className="model-dropdown-group-label">Google Gemini</div>
+                  {[
+                    {value: 'gemini-2.5-flash-lite', icon: 'flash_on', label: 'gemini-2.5-flash-lite', desc: 'Fast'},
+                    {value: 'gemini-2.5-pro', icon: 'diamond', label: 'gemini-2.5-pro', desc: 'Best quality'},
+                  ].map(m => (
+                    <button
+                      key={m.value}
+                      className="model-dropdown-item disabled"
+                      disabled
+                    >
+                      <span className="material-symbols-outlined model-icon" style={{fontSize: '18px'}}>{m.icon}</span>
+                      <div className="model-dropdown-item-text">
+                        <span className="model-dropdown-item-name">{m.label}</span>
+                        <span className="model-dropdown-item-desc">Disabled</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <div className="assistant-messages" ref={messagesContainerRef}>
             {messages.length === 0 ? (

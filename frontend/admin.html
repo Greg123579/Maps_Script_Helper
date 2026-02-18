@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Maps Script Helper – Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Symbols+Outlined" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Roboto', sans-serif;
+      background: #1a1f2e;
+      color: #e5e7eb;
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .admin-card {
+      background: #252b3b;
+      border-radius: 12px;
+      border: 1px solid #374151;
+      padding: 32px;
+      max-width: 520px;
+      width: 100%;
+    }
+    h1 {
+      margin: 0 0 8px 0;
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #f3f4f6;
+    }
+    .subtitle {
+      color: #9ca3af;
+      font-size: 0.9rem;
+      margin-bottom: 24px;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: #d1d5db;
+      margin-bottom: 6px;
+    }
+    input[type="password"],
+    input[type="text"],
+    input[type="email"] {
+      width: 100%;
+      padding: 10px 14px;
+      font-size: 1rem;
+      border: 1px solid #4b5563;
+      border-radius: 8px;
+      background: #0f1115;
+      color: #e5e7eb;
+    }
+    input:focus {
+      outline: none;
+      border-color: #3b82f6;
+    }
+    textarea {
+      width: 100%;
+      min-height: 140px;
+      padding: 10px 14px;
+      font-size: 0.9rem;
+      font-family: inherit;
+      border: 1px solid #4b5563;
+      border-radius: 8px;
+      background: #0f1115;
+      color: #e5e7eb;
+      resize: vertical;
+    }
+    .user-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      border: 2px solid transparent;
+      margin-bottom: 4px;
+    }
+    .user-row:hover { background: rgba(255,255,255,0.05); }
+    .user-row.selected { border-color: #3b82f6; background: rgba(59,130,246,0.1); }
+    button {
+      font-family: inherit;
+      cursor: pointer;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: #3b82f6;
+      color: white;
+      border: none;
+    }
+    .btn-primary:hover {
+      background: #2563eb;
+    }
+    .btn-primary:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .btn-danger {
+      background: transparent;
+      color: #ef4444;
+      border: 1px solid #ef4444;
+      margin-top: 12px;
+      width: 100%;
+      justify-content: center;
+    }
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, 0.15);
+    }
+    .actions {
+      margin-top: 28px;
+      padding-top: 24px;
+      border-top: 1px solid #374151;
+    }
+    .actions h2 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #f3f4f6;
+      margin: 0 0 16px 0;
+    }
+    .actions .btn-danger {
+      margin-top: 12px;
+    }
+    .actions .btn-danger:first-of-type {
+      margin-top: 0;
+    }
+    .message {
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      margin-top: 16px;
+    }
+    .message.error {
+      background: rgba(239, 68, 68, 0.15);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    .message.success {
+      background: rgba(34, 197, 94, 0.15);
+      color: #86efac;
+      border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+    .locked .actions { display: none; }
+    .unlocked .gate { display: none; }
+  </style>
+</head>
+<body>
+  <div class="admin-card" id="card">
+    <h1>Admin</h1>
+    <p class="subtitle">Maps Script Helper</p>
+
+    <div class="gate">
+      <form id="loginForm" onsubmit="return unlock(event)">
+        <div class="form-group">
+          <label for="password">Admin password</label>
+          <input type="password" id="password" name="password" placeholder="Enter admin password" autocomplete="current-password" autofocus />
+        </div>
+        <button type="submit" class="btn-primary" id="unlockBtn">
+          <span class="material-symbols-outlined" style="font-size:20px">lock_open</span>
+          Unlock
+        </button>
+      </form>
+    </div>
+
+    <div class="actions" style="display:none">
+      <h2>Reset user password</h2>
+      <p style="color:#9ca3af;font-size:0.85rem;margin:0 0 12px 0">
+        Search by email, select a user, then reset. An 8-character password is generated and an email is created for you to copy and send.
+      </p>
+      <div class="form-group" style="margin-bottom:8px">
+        <label for="searchEmail">Search by email</label>
+        <div style="display:flex;gap:8px">
+          <input type="email" id="searchEmail" placeholder="e.g. john@company.com" style="flex:1" onkeydown="if(event.key==='Enter')searchUsers()" />
+          <button type="button" class="btn-primary" onclick="searchUsers()">Search</button>
+        </div>
+      </div>
+      <div id="searchResults" style="margin-bottom:12px;min-height:0"></div>
+      <button type="button" class="btn-primary" id="resetBtn" onclick="resetUserPassword()" style="width:100%;justify-content:center" disabled>
+        <span class="material-symbols-outlined" style="font-size:20px">key</span>
+        Reset password
+      </button>
+      <div id="emailResult" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid #374151">
+        <label style="margin-bottom:8px;display:block">Copy this email and send to the user:</label>
+        <textarea id="emailBody" readonly></textarea>
+        <button type="button" class="btn-primary" onclick="copyEmailToClipboard()" style="margin-top:8px;width:100%;justify-content:center">
+          <span class="material-symbols-outlined" style="font-size:20px">content_copy</span>
+          Copy to clipboard
+        </button>
+      </div>
+
+      <h2 style="margin-top:28px">Danger zone</h2>
+      <p style="color:#9ca3af;font-size:0.85rem;margin:0 0 16px 0">
+        These actions permanently delete data and cannot be undone.
+      </p>
+      <button type="button" class="btn-danger" onclick="resetUserData()">
+        <span class="material-symbols-outlined" style="font-size:20px">delete_forever</span>
+        Reset All User Data
+      </button>
+      <button type="button" class="btn-danger" onclick="freshDatabase()">
+        <span class="material-symbols-outlined" style="font-size:20px">refresh</span>
+        Deploy Fresh
+      </button>
+    </div>
+
+    <div id="message"></div>
+  </div>
+
+  <script>
+    let adminPassword = '';
+
+    function showMessage(text, type) {
+      const el = document.getElementById('message');
+      el.textContent = text;
+      el.className = 'message ' + (type || '');
+      el.style.display = text ? 'block' : 'none';
+    }
+
+    async function unlock(e) {
+      e.preventDefault();
+      const input = document.getElementById('password');
+      const pwd = input.value.trim();
+      if (!pwd) {
+        showMessage('Enter the admin password.', 'error');
+        return false;
+      }
+      const btn = document.getElementById('unlockBtn');
+      btn.disabled = true;
+      showMessage('');
+      try {
+        const r = await fetch('/api/admin/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pwd })
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data.ok) {
+          adminPassword = pwd;
+          document.getElementById('card').classList.add('unlocked');
+          document.getElementById('card').classList.remove('locked');
+          document.querySelector('.actions').style.display = 'block';
+          document.querySelector('.gate').style.display = 'none';
+          showMessage('Unlocked.', 'success');
+          setTimeout(() => showMessage(''), 2000);
+        } else {
+          showMessage(data.detail || data.error || 'Invalid password.', 'error');
+        }
+      } catch (err) {
+        showMessage('Failed to verify: ' + err.message, 'error');
+      }
+      btn.disabled = false;
+      return false;
+    }
+
+    function authHeaders() {
+      return { 'Content-Type': 'application/json', 'X-Admin-Password': adminPassword };
+    }
+
+    let selectedUserId = null;
+
+    async function searchUsers() {
+      const q = document.getElementById('searchEmail').value.trim();
+      if (!q || q.length < 2) {
+        showMessage('Enter at least 2 characters to search.', 'error');
+        return;
+      }
+      showMessage('');
+      document.getElementById('searchResults').innerHTML = '';
+      document.getElementById('emailResult').style.display = 'none';
+      selectedUserId = null;
+      document.getElementById('resetBtn').disabled = true;
+      try {
+        const r = await fetch('/api/admin/users?email=' + encodeURIComponent(q), {
+          headers: { 'X-Admin-Password': adminPassword }
+        });
+        const data = await r.json().catch(() => ({}));
+        const users = data.users || [];
+        const container = document.getElementById('searchResults');
+        if (users.length === 0) {
+          container.innerHTML = '<p style="color:#9ca3af;font-size:0.9rem;margin:0">No users found with that email.</p>';
+          return;
+        }
+        container.innerHTML = users.map(u => `
+          <div class="user-row" data-id="${u.id}" onclick="selectUser('${u.id}')">
+            <input type="radio" name="selectedUser" id="user-${u.id}" />
+            <label for="user-${u.id}" style="margin:0;cursor:pointer;flex:1">
+              <strong>${escapeHtml(u.name)}</strong>
+              ${u.email ? '<br><span style="color:#9ca3af;font-size:0.85rem">' + escapeHtml(u.email) + '</span>' : ''}
+            </label>
+          </div>
+        `).join('');
+      } catch (err) {
+        showMessage('Search failed: ' + err.message, 'error');
+      }
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function selectUser(id) {
+      selectedUserId = id;
+      document.querySelectorAll('.user-row').forEach(r => {
+        r.classList.toggle('selected', r.dataset.id === id);
+        r.querySelector('input').checked = r.dataset.id === id;
+      });
+      document.getElementById('resetBtn').disabled = false;
+    }
+
+    async function resetUserPassword() {
+      if (!selectedUserId) {
+        showMessage('Select a user first.', 'error');
+        return;
+      }
+      showMessage('');
+      document.getElementById('emailResult').style.display = 'none';
+      try {
+        const r = await fetch('/api/admin/reset-user-password', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ user_id: selectedUserId })
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data.success) {
+          showMessage('Password reset. Copy the email below and send it to the user.', 'success');
+          document.getElementById('emailBody').value = data.email_body || '';
+          document.getElementById('emailResult').style.display = 'block';
+          selectedUserId = null;
+          document.getElementById('resetBtn').disabled = true;
+          document.querySelectorAll('.user-row').forEach(r => { r.classList.remove('selected'); r.querySelector('input').checked = false; });
+        } else {
+          showMessage(data.error || data.detail || 'Reset failed.', 'error');
+        }
+      } catch (err) {
+        showMessage('Failed: ' + err.message, 'error');
+      }
+    }
+
+    function copyEmailToClipboard() {
+      const ta = document.getElementById('emailBody');
+      ta.select();
+      ta.setSelectionRange(0, 99999);
+      navigator.clipboard.writeText(ta.value).then(() => {
+        showMessage('Copied to clipboard.', 'success');
+        setTimeout(() => showMessage(''), 2000);
+      }).catch(() => showMessage('Copy failed.', 'error'));
+    }
+
+    async function resetUserData() {
+      if (!confirm('⚠️ RESET ALL USER DATA?\n\nThis will permanently delete:\n• All user accounts\n• All saved scripts (user-created)\n• All uploaded images (user-uploaded)\n\nStarter scripts and library images will be kept.\n\nThis action CANNOT be undone!\n\nAre you absolutely sure?')) return;
+      showMessage('');
+      try {
+        const r = await fetch('/api/admin/reset-user-data', {
+          method: 'POST',
+          headers: authHeaders()
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data.success) {
+          showMessage('Reset complete: ' + (data.deleted?.users || 0) + ' users, ' + (data.deleted?.scripts || 0) + ' scripts, ' + (data.deleted?.images || 0) + ' images deleted.', 'success');
+        } else {
+          showMessage(data.detail || data.error || 'Reset failed.', 'error');
+        }
+      } catch (err) {
+        showMessage('Failed: ' + err.message, 'error');
+      }
+    }
+
+    async function freshDatabase() {
+      if (!confirm('⚠️ DEPLOY FRESH?\n\nThis will:\n• Drop ALL tables and recreate them\n• Re-seed default library scripts\n\nResult: empty users, empty scripts, starter scripts only.\n\nUse this to start with a clean database (e.g. before first deployment).\n\nThis action CANNOT be undone!\n\nContinue?')) return;
+      showMessage('');
+      try {
+        const r = await fetch('/api/admin/fresh-database', {
+          method: 'POST',
+          headers: authHeaders()
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data.success) {
+          showMessage('Database reset to fresh state. Library scripts have been re-seeded.', 'success');
+        } else {
+          showMessage(data.detail || data.error || 'Deploy fresh failed.', 'error');
+        }
+      } catch (err) {
+        showMessage('Failed: ' + err.message, 'error');
+      }
+    }
+  </script>
+</body>
+</html>
