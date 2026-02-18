@@ -3944,49 +3944,49 @@ if __name__ == "__main__":
               <div className="welcome-screen">
                 <div className="welcome-screen-inner">
 
-                  {/* Hero - Compact */}
-                  <div className="welcome-hero">
-                    <MapsAILogo size={100} showText={true} />
-                    <h1 className="welcome-hero-title" style={{ color: isDark ? '#f3f4f6' : '#1c1b1f' }}>
-                      MAPS Script Helper
-                    </h1>
-                    <p className="welcome-hero-subtitle" style={{ color: isDark ? '#b6bcc8' : '#49454f' }}>
+                  {/* ── Bento Cell: Hero (top-left) ── */}
+                  <div className="welcome-bento-hero">
+                    <MapsAILogo size={72} showText={false} />
+                    <h1 className="welcome-hero-title">MAPS Script Helper</h1>
+                    <p className="welcome-hero-subtitle">
                       Develop and test Python scripts for MAPS Script Bridge with instant feedback
                     </p>
-                  </div>
-
-                  {/* Quick Actions - Horizontal Row */}
-                  <div className="welcome-quick-actions">
-                    <div className="md3-card md3-card-filled welcome-action-card" onClick={() => {
+                    <button className="welcome-hero-cta" onClick={() => {
                       const starter = `# Start Scripting\n#\n# Tip: scripts should use MapsBridge to read inputs and send outputs.\n# Choose ONE request type:\n#   request = MapsBridge.ScriptTileSetRequest.from_stdin()\n#   request = MapsBridge.ScriptImageLayerRequest.from_stdin()\n\nimport MapsBridge\n\n\ndef main():\n    MapsBridge.log_info("Ready to script. Add your MAPS Script Bridge logic here.")\n\n\nif __name__ == \"__main__\":\n    main()\n`;
                       setCurrentScript(null);
                       setCode(starter);
                       setActiveTab('code');
                     }}>
-                      <div className="welcome-action-icon">
-                        <span className="material-symbols-outlined">code</span>
-                      </div>
-                      <span className="welcome-action-label">Start Scripting</span>
-                      <div className="md3-card-state-layer"></div>
-                    </div>
+                      <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>code</span>
+                      Start Scripting
+                    </button>
+                  </div>
 
-                    <div className="md3-card md3-card-filled welcome-action-card" onClick={() => setActiveTab('scripts')}>
+                  {/* ── Bento Cell: Quick Actions (top-right) ── */}
+                  <div className="welcome-bento-actions">
+                    <div className="welcome-bento-actions-title">Quick Actions</div>
+
+                    <div className="welcome-action-card" onClick={() => setActiveTab('scripts')}>
                       <div className="welcome-action-icon">
                         <span className="material-symbols-outlined">inventory_2</span>
                       </div>
-                      <span className="welcome-action-label">Browse Scripts</span>
-                      <div className="md3-card-state-layer"></div>
+                      <div className="welcome-action-text">
+                        <span className="welcome-action-label">Browse Scripts</span>
+                        <span className="welcome-action-desc">Examples & saved scripts</span>
+                      </div>
                     </div>
 
-                    <div className="md3-card md3-card-filled welcome-action-card" onClick={() => setActiveTab('image-finder')}>
+                    <div className="welcome-action-card" onClick={() => setActiveTab('image-finder')}>
                       <div className="welcome-action-icon" style={{ background: '#f57c00' }}>
                         <span className="material-symbols-outlined">photo_library</span>
                       </div>
-                      <span className="welcome-action-label">Image Library</span>
-                      <div className="md3-card-state-layer"></div>
+                      <div className="welcome-action-text">
+                        <span className="welcome-action-label">Image Library</span>
+                        <span className="welcome-action-desc">Upload & manage images</span>
+                      </div>
                     </div>
 
-                    <div className="md3-card md3-card-filled welcome-action-card" onClick={async () => {
+                    <div className="welcome-action-card" onClick={async () => {
                       try {
                         let imagesToSearch = libraryImages;
                         if (imagesToSearch.length === 0 && currentUser) {
@@ -4021,16 +4021,58 @@ if __name__ == "__main__":
                       <div className="welcome-action-icon" style={{ background: '#4caf50' }}>
                         <span className="material-symbols-outlined">rocket_launch</span>
                       </div>
-                      <span className="welcome-action-label">Quick Start</span>
-                      <div className="md3-card-state-layer"></div>
+                      <div className="welcome-action-text">
+                        <span className="welcome-action-label">Quick Start</span>
+                        <span className="welcome-action-desc">Run a demo script instantly</span>
+                      </div>
+                    </div>
+
+                    <div className="welcome-action-card" onClick={() => setActiveTab('help')}>
+                      <div className="welcome-action-icon" style={{ background: '#7b1fa2' }}>
+                        <span className="material-symbols-outlined">help</span>
+                      </div>
+                      <div className="welcome-action-text">
+                        <span className="welcome-action-label">Help & Docs</span>
+                        <span className="welcome-action-desc">Guides & API reference</span>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Community Scripts Section */}
-                  <div className="welcome-community-section">
+                  {/* ── Bento Cell: AI Assistant (bottom-left, 1/3) ── */}
+                  <div className="welcome-bento-ai">
+                    <div className="welcome-bento-ai-header">
+                      <span className="material-symbols-outlined">auto_awesome</span>
+                      <span>Ask the AI Assistant</span>
+                    </div>
+                    <div className="welcome-ai-chips">
+                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Tell me about MapsBridge.py: what it does, the core API vs helper functions, and show a minimal example script using the helpers.")}>
+                        <span className="material-symbols-outlined">menu_book</span>
+                        Tell me about MapsBridge.py
+                      </button>
+                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Create a script that applies false color mapping to a grayscale EM image using a colormap like viridis or plasma.")}>
+                        <span className="material-symbols-outlined">palette</span>
+                        False color visualization
+                      </button>
+                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Create a script that detects and counts particles in an EM image and displays the count.")}>
+                        <span className="material-symbols-outlined">bubble_chart</span>
+                        Detect & count particles
+                      </button>
+                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Create a script that detects edges and outputs them.")}>
+                        <span className="material-symbols-outlined">filter_b_and_w</span>
+                        Edge detection script
+                      </button>
+                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Create a script that enhances image contrast using histogram equalization.")}>
+                        <span className="material-symbols-outlined">contrast</span>
+                        Contrast enhancement
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ── Bento Cell: Community Scripts (bottom-right, 2/3) ── */}
+                  <div className="welcome-bento-community">
                     <div className="welcome-section-header">
-                      <div className="welcome-section-title" style={{ fontSize: '20px', fontWeight: '500' }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: '28px', color: isDark ? '#ce93d8' : '#7b1fa2' }}>groups</span>
+                      <div className="welcome-section-title">
+                        <span className="material-symbols-outlined" style={{ fontSize: '22px', color: isDark ? '#ce93d8' : '#7b1fa2' }}>groups</span>
                         <span style={{ color: isDark ? '#e0e0e0' : '#1D192B' }}>From the Community</span>
                       </div>
                       {communityScripts.length > 0 && (
@@ -4040,111 +4082,63 @@ if __name__ == "__main__":
                           style={{ color: isDark ? '#ce93d8' : '#7b1fa2' }}
                         >
                           View All
-                          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>arrow_forward</span>
+                          <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_forward</span>
                         </button>
                       )}
                     </div>
 
-                    {communityScripts.length === 0 ? (
-                      <div className="welcome-community-empty" style={{
-                        background: isDark ? '#2a2a2a' : '#faf5ff',
-                        borderColor: isDark ? '#404040' : '#e8def8'
-                      }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: '36px', color: isDark ? '#555' : '#ccc' }}>groups</span>
-                        <p style={{ color: isDark ? '#888' : '#666', margin: '8px 0 0 0', fontSize: '14px' }}>
-                          No community scripts yet -- be the first to share!
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="welcome-community-grid">
-                        {featuredCommunityScripts.map(script => (
-                          <div
-                            key={script.id}
-                            className="welcome-community-card"
-                            onClick={() => handleLoadScript(script)}
-                            title={script.description || script.name}
-                            style={{
-                              background: isDark ? '#2a2a2a' : '#fff',
-                              borderColor: isDark ? '#404040' : '#e0e0e0'
-                            }}
-                          >
-                            {(script.community_image_thumbnail_url || script.community_image_url) && (
-                              <div className="welcome-community-card-img">
-                                <img src={script.community_image_thumbnail_url || script.community_image_url} alt="" onError={(e) => { e.target.style.display = 'none'; }} />
-                              </div>
-                            )}
-                            <div className="welcome-community-card-body">
-                              <div className="welcome-community-card-name" style={{ color: isDark ? '#e0e0e0' : '#1D192B' }}>
-                                {script.name}
-                              </div>
-                              <div className="welcome-community-card-meta">
-                                <span className="welcome-community-card-author" style={{ color: isDark ? '#ce93d8' : '#7b1fa2' }}>
-                                  <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>person</span>
-                                  {script.author_name}
-                                </span>
-                                <span className="welcome-community-card-rating">
-                                  <span className="material-symbols-outlined" style={{ fontSize: '14px', color: '#ffc107' }}>star</span>
-                                  <span style={{ color: isDark ? '#ccc' : '#666' }}>
-                                    {script.rating_average || 0} ({script.rating_count || 0})
+                    <div className="welcome-community-section">
+                      {communityScripts.length === 0 ? (
+                        <div className="welcome-community-empty" style={{
+                          background: isDark ? 'rgba(255,255,255,0.04)' : '#faf5ff',
+                          borderColor: isDark ? '#404040' : '#e8def8'
+                        }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: '32px', color: isDark ? '#555' : '#ccc' }}>groups</span>
+                          <p style={{ color: isDark ? '#888' : '#666', margin: '8px 0 0 0', fontSize: '13px' }}>
+                            No community scripts yet -- be the first to share!
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="welcome-community-grid">
+                          {featuredCommunityScripts.map(script => (
+                            <div
+                              key={script.id}
+                              className="welcome-community-card"
+                              onClick={() => handleLoadScript(script)}
+                              title={script.description || script.name}
+                            >
+                              {(script.community_image_thumbnail_url || script.community_image_url) && (
+                                <div className="welcome-community-card-img">
+                                  <img src={script.community_image_thumbnail_url || script.community_image_url} alt="" onError={(e) => { e.target.style.display = 'none'; }} />
+                                </div>
+                              )}
+                              <div className="welcome-community-card-body">
+                                <div className="welcome-community-card-name" style={{ color: isDark ? '#e0e0e0' : '#1D192B' }}>
+                                  {script.name}
+                                </div>
+                                <div className="welcome-community-card-meta">
+                                  <span className="welcome-community-card-author" style={{ color: isDark ? '#ce93d8' : '#7b1fa2' }}>
+                                    <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>person</span>
+                                    {script.author_name}
                                   </span>
-                                </span>
+                                  <span className="welcome-community-card-rating">
+                                    <span className="material-symbols-outlined" style={{ fontSize: '13px', color: '#ffc107' }}>star</span>
+                                    <span style={{ color: isDark ? '#ccc' : '#666' }}>
+                                      {script.rating_average || 0} ({script.rating_count || 0})
+                                    </span>
+                                  </span>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* AI Starter Prompts */}
-                  <div className="welcome-ai-section">
-                    <div className="welcome-section-header" style={{ justifyContent: 'center' }}>
-                      <div className="welcome-section-title">
-                        <span className="material-symbols-outlined" style={{ fontSize: '20px', color: isDark ? '#90caf9' : '#1976d2' }}>auto_awesome</span>
-                        <span style={{ color: isDark ? '#e0e0e0' : '#1D192B' }}>Ask the AI Assistant</span>
-                      </div>
-                    </div>
-                    <div className="welcome-ai-chips">
-                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Tell me about MapsBridge.py: what it does, the core API vs helper functions, and show a minimal example script using the helpers.")} style={{ background: isDark ? '#1a3a5c' : undefined, borderColor: isDark ? '#2d5a8e' : undefined, color: isDark ? '#90caf9' : undefined }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>menu_book</span>
-                        Tell me about MapsBridge.py
-                      </button>
-                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Create a script that applies false color mapping to a grayscale EM image using a colormap like viridis or plasma.")} style={{ background: isDark ? '#1a3a5c' : undefined, borderColor: isDark ? '#2d5a8e' : undefined, color: isDark ? '#90caf9' : undefined }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>palette</span>
-                        Create a false color visualization
-                      </button>
-                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Create a script that detects and counts particles in an EM image and displays the count.")} style={{ background: isDark ? '#1a3a5c' : undefined, borderColor: isDark ? '#2d5a8e' : undefined, color: isDark ? '#90caf9' : undefined }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>bubble_chart</span>
-                        Detect and count particles
-                      </button>
-                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Create a script that detects edges and outputs them.")} style={{ background: isDark ? '#1a3a5c' : undefined, borderColor: isDark ? '#2d5a8e' : undefined, color: isDark ? '#90caf9' : undefined }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>filter_b_and_w</span>
-                        Create an edge detection script
-                      </button>
-                      <button className="welcome-ai-chip" onClick={() => handleSendMessage("Create a script that enhances image contrast using histogram equalization.")} style={{ background: isDark ? '#1a3a5c' : undefined, borderColor: isDark ? '#2d5a8e' : undefined, color: isDark ? '#90caf9' : undefined }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>contrast</span>
-                        Apply contrast enhancement
-                      </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  {/* Footer Row */}
+                  {/* ── Footer Tip Bar ── */}
                   <div className="welcome-footer">
-                    <button
-                      className="welcome-footer-help-btn"
-                      onClick={() => setActiveTab('help')}
-                      style={{
-                        color: isDark ? '#90caf9' : '#1976d2',
-                        borderColor: isDark ? '#2d5a8e' : '#bbdefb'
-                      }}
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>help</span>
-                      Help & Documentation
-                    </button>
-                    <div className="welcome-footer-tip" style={{
-                      background: isDark ? 'rgba(25, 118, 210, 0.12)' : '#E8F4FD',
-                      borderColor: isDark ? 'rgba(25, 118, 210, 0.3)' : '#BBDEFB'
-                    }}>
+                    <div className="welcome-footer-tip">
                       <span className="material-symbols-outlined" style={{ color: isDark ? '#90caf9' : '#1976D2', fontSize: '18px' }}>info</span>
                       <span style={{ color: isDark ? '#cfe8ff' : '#0D47A1', fontSize: '13px' }}>
                         Scripts written here work in both the helper app and real MAPS
