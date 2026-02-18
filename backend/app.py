@@ -77,7 +77,7 @@ _import_time = time.time() - _start_time
 print(f"[Startup] {_import_time:.2f}s - All imports complete")
 
 # Version tracking
-API_VERSION = "1.20.2"  # Admin area, improved login UX, removed deploy/logs/danger zone from settings
+API_VERSION = "1.21.0"  # Thumbnail support, bento grid welcome screen redesign
 
 # Configure Gemini AI (env vars override hardcoded secrets in backend/secrets.py)
 _secrets_path = pathlib.Path(__file__).resolve().parent / "secrets.py"
