@@ -61,7 +61,8 @@ class KubernetesRunner:
         job_id: str,
         configmap_name: str,
         input_path: str,
-        output_path: str
+        output_path: str,
+        script_parameters: str = ""
     ) -> str:
         """Create a pod to execute the user script."""
         pod_name = f"runner-{job_id}"
@@ -93,7 +94,8 @@ class KubernetesRunner:
                         command=["python", "-u", "/work/job_runner.py"],
                         env=[
                             client.V1EnvVar(name="MPLCONFIGDIR", value=f"/outputs/{job_dir}/result/.matplotlib"),
-                            client.V1EnvVar(name="JOB_ID", value=job_id)
+                            client.V1EnvVar(name="JOB_ID", value=job_id),
+                            client.V1EnvVar(name="MAPS_SCRIPT_PARAMETERS", value=script_parameters or "")
                         ],
                         volume_mounts=[
                             client.V1VolumeMount(
@@ -218,7 +220,8 @@ class KubernetesRunner:
         request_json: str,
         input_path: str,
         output_path: str,
-        timeout: Optional[int] = None
+        timeout: Optional[int] = None,
+        script_parameters: str = ""
     ) -> Dict[str, Any]:
         """
         Execute a script in a Kubernetes pod.
@@ -248,7 +251,7 @@ class KubernetesRunner:
             configmap_name = self.create_script_configmap(job_id, script_content, request_json)
             
             # Create and run pod
-            pod_name = self.create_runner_pod(job_id, configmap_name, input_path, output_path)
+            pod_name = self.create_runner_pod(job_id, configmap_name, input_path, output_path, script_parameters=script_parameters)
             
             # Wait for completion
             result = self.wait_for_pod_completion(pod_name, timeout)

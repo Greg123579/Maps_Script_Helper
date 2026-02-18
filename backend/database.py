@@ -122,6 +122,22 @@ def migrate_add_user_email_display_name():
                 print(f"[Database] Note: migrate_add_user_email_display_name ({col_name}): {e}")
 
 
+def migrate_add_script_parameters():
+    """Add script_parameters column to user_scripts table if missing."""
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE user_scripts ADD COLUMN script_parameters TEXT DEFAULT ''"))
+            conn.commit()
+        print("[Database] ✓ Added script_parameters column to user_scripts")
+    except Exception as e:
+        msg = str(e).lower()
+        if "duplicate" in msg or "already exists" in msg:
+            pass
+        else:
+            print(f"[Database] Note: migrate_add_script_parameters: {e}")
+
+
 def migrate_create_password_reset_tokens():
     """Create password_reset_tokens table if it doesn't exist."""
     from sqlalchemy import text
@@ -242,6 +258,7 @@ def ensure_database():
     migrate_add_global_image_field()
     migrate_create_script_ratings()
     migrate_add_user_email_display_name()
+    migrate_add_script_parameters()
     migrate_create_password_reset_tokens()
 
 

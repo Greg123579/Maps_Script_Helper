@@ -1262,6 +1262,195 @@ const LoginScreen = ({ onLogin }) => {
   );
 };
 
+// Parameter Editor Modal Component
+const ParameterEditorModal = ({ isOpen, onClose, value, onChange, isDark = false }) => {
+  const [rows, setRows] = useState([]);
+
+  useEffect(() => {
+    if (isOpen) {
+      const parsed = [];
+      if (value) {
+        value.split(';').forEach(pair => {
+          const trimmed = pair.trim();
+          if (!trimmed) return;
+          const eqIdx = trimmed.indexOf('=');
+          if (eqIdx > 0) {
+            parsed.push({ key: trimmed.slice(0, eqIdx).trim(), value: trimmed.slice(eqIdx + 1).trim() });
+          } else {
+            parsed.push({ key: trimmed, value: '' });
+          }
+        });
+      }
+      if (parsed.length === 0) parsed.push({ key: '', value: '' });
+      setRows(parsed);
+    }
+  }, [isOpen, value]);
+
+  const serializeRows = (r) => r.filter(p => p.key.trim()).map(p => `${p.key.trim()}=${p.value.trim()}`).join(';');
+
+  const handleRowChange = (idx, field, val) => {
+    const updated = rows.map((r, i) => i === idx ? { ...r, [field]: val } : r);
+    setRows(updated);
+  };
+
+  const addRow = () => setRows([...rows, { key: '', value: '' }]);
+
+  const removeRow = (idx) => {
+    const updated = rows.filter((_, i) => i !== idx);
+    setRows(updated.length ? updated : [{ key: '', value: '' }]);
+  };
+
+  const handleApply = () => {
+    onChange(serializeRows(rows));
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  const bg = isDark ? '#1e2330' : '#fff';
+  const border = isDark ? '#374151' : '#d1d5db';
+  const inputBg = isDark ? '#0f1115' : '#f9fafb';
+  const inputColor = isDark ? '#e5e7eb' : '#333';
+  const labelColor = isDark ? '#9ca3af' : '#666';
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={e => e.stopPropagation()} style={{
+        maxWidth: '480px',
+        background: bg,
+        border: `1px solid ${border}`,
+        borderRadius: '12px'
+      }}>
+        <div className="modal-header">
+          <h2 style={{ fontSize: '16px', margin: 0, color: isDark ? '#f3f4f6' : '#111' }}>Edit Script Parameters</h2>
+          <button className="modal-close" onClick={onClose}>
+            <span className="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div style={{ padding: '16px', maxHeight: '400px', overflowY: 'auto' }}>
+          <p style={{ fontSize: '12px', color: labelColor, margin: '0 0 12px' }}>
+            Parameters are passed to your script as <code style={{ fontSize: '11px' }}>request.script_parameters</code>. 
+            Parse with <code style={{ fontSize: '11px' }}>MapsBridge.parse_parameters()</code>.
+          </p>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '6px', padding: '0 4px' }}>
+            <span style={{ flex: 1, fontSize: '11px', fontWeight: 600, color: labelColor, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Key</span>
+            <span style={{ flex: 1, fontSize: '11px', fontWeight: 600, color: labelColor, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Value</span>
+            <span style={{ width: '32px' }}></span>
+          </div>
+          {rows.map((row, idx) => (
+            <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
+              <input
+                type="text"
+                value={row.key}
+                onChange={e => handleRowChange(idx, 'key', e.target.value)}
+                placeholder="key"
+                autoFocus={idx === rows.length - 1 && !row.key}
+                style={{
+                  flex: 1,
+                  padding: '6px 8px',
+                  borderRadius: '6px',
+                  border: `1px solid ${border}`,
+                  background: inputBg,
+                  color: inputColor,
+                  fontSize: '13px',
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                  outline: 'none'
+                }}
+              />
+              <input
+                type="text"
+                value={row.value}
+                onChange={e => handleRowChange(idx, 'value', e.target.value)}
+                placeholder="value"
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addRow(); } }}
+                style={{
+                  flex: 1,
+                  padding: '6px 8px',
+                  borderRadius: '6px',
+                  border: `1px solid ${border}`,
+                  background: inputBg,
+                  color: inputColor,
+                  fontSize: '13px',
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                  outline: 'none'
+                }}
+              />
+              <button
+                onClick={() => removeRow(idx)}
+                title="Remove parameter"
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  minWidth: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: 'none',
+                  background: 'transparent',
+                  color: isDark ? '#6b7280' : '#9ca3af',
+                  cursor: 'pointer',
+                  borderRadius: '6px',
+                  padding: 0
+                }}
+                onMouseEnter={e => e.target.style.color = '#ef4444'}
+                onMouseLeave={e => e.target.style.color = isDark ? '#6b7280' : '#9ca3af'}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>delete</span>
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={addRow}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '6px 12px',
+              border: `1px dashed ${border}`,
+              borderRadius: '6px',
+              background: 'transparent',
+              color: isDark ? '#60a5fa' : '#2563eb',
+              fontSize: '12px',
+              cursor: 'pointer',
+              width: '100%',
+              justifyContent: 'center'
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>add</span>
+            Add Parameter
+          </button>
+        </div>
+        <div style={{
+          padding: '12px 16px',
+          borderTop: `1px solid ${border}`,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}>
+          <span style={{
+            fontSize: '11px',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+            color: labelColor,
+            maxWidth: '60%',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}>
+            {serializeRows(rows) || '(empty)'}
+          </span>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button className="md-button" onClick={onClose}>Cancel</button>
+            <button className="md-button md-button-filled" onClick={handleApply}>
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>check</span>
+              Apply
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const App = () => {
   // Welcome message shown on initial load
   const WELCOME_MESSAGE = `# Welcome to Maps Python Script Helper! 🗺️
@@ -1330,7 +1519,7 @@ if __name__ == "__main__":
   const [assistantWidth, setAssistantWidth] = useState(360); // Default width in pixels
   const [isResizing, setIsResizing] = useState(false);
   const [isCodeUpdating, setIsCodeUpdating] = useState(false); // Track code update animation
-  const [aiModel, setAiModel] = useState('codex-mini-latest'); // Default to codex-mini-latest
+  const [aiModel, setAiModel] = useState('gpt-5-mini'); // Default to gpt-5-mini
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [isSaveAsMode, setIsSaveAsMode] = useState(false); // Track if doing "Save As" (always create new)
@@ -1341,6 +1530,8 @@ if __name__ == "__main__":
   const [communityScripts, setCommunityScripts] = useState([]); // Community-shared scripts
   const [scriptsSubTab, setScriptsSubTab] = useState('templates'); // 'templates', 'user', or 'community'
   const [currentScript, setCurrentScript] = useState(null); // Track currently loaded script for updates
+  const [scriptParameters, setScriptParameters] = useState(''); // Script parameters (passed as request.script_parameters)
+  const [showParamEditor, setShowParamEditor] = useState(false); // Parameter editor modal
   const [communitySearch, setCommunitySearch] = useState(''); // Community search filter
   const [showPublishDialog, setShowPublishDialog] = useState(false); // "Share to Community" dialog
   const [publishingScript, setPublishingScript] = useState(null); // Script being published
@@ -1421,7 +1612,7 @@ if __name__ == "__main__":
     console.log('[MapsScriptHelper] Logging in user, setting activeTab to welcome');
     // Clear AI + workspace state (same behavior as "New Chat")
     setMessages([]);
-    setAiModel('codex-mini-latest');
+    setAiModel('gpt-5-mini');
     setLastError(null);
     setOutput('Ready.');
     setOriginalImage(null);
@@ -1447,6 +1638,7 @@ if __name__ == "__main__":
     setActiveTab('welcome');
     setCode(''); // Clear code to show welcome screen
     setCurrentScript(null); // Clear any loaded script
+    setScriptParameters('');
     setEditorKey(prev => prev + 1); // Force editor recreation
   };
 
@@ -1470,6 +1662,7 @@ if __name__ == "__main__":
     setActiveTab('welcome');
     setCode(''); // Clear code to show welcome screen
     setCurrentScript(null);
+    setScriptParameters('');
     setEditorKey(prev => prev + 1); // Force editor recreation
   };
 
@@ -2743,7 +2936,8 @@ if __name__ == "__main__":
           name: scriptName,
           description: scriptDescription,
           code: currentCode,
-          user_id: currentUser?.id || ''
+          user_id: currentUser?.id || '',
+          script_parameters: scriptParameters || ''
         })
       });
 
@@ -2854,7 +3048,8 @@ if __name__ == "__main__":
           name: currentScript.name,
           description: currentScript.description,
           code: code,
-          user_id: currentUser.id
+          user_id: currentUser.id,
+          script_parameters: scriptParameters || ''
         })
       });
 
@@ -2875,6 +3070,29 @@ if __name__ == "__main__":
     }
   };
 
+  const detectParametersFromCode = (code) => {
+    if (!code) return '';
+    const pairs = [];
+    const seen = new Set();
+    // Match params.get("key", "default") / params.get('key', 'default')
+    const getRegex = /params\.get\(\s*["']([^"']+)["']\s*,\s*["']([^"']*)["']\s*\)/g;
+    let m;
+    while ((m = getRegex.exec(code)) !== null) {
+      if (!seen.has(m[1])) { seen.add(m[1]); pairs.push(`${m[1]}=${m[2]}`); }
+    }
+    // Match params.get("key") with no default
+    const getNoDefault = /params\.get\(\s*["']([^"']+)["']\s*\)/g;
+    while ((m = getNoDefault.exec(code)) !== null) {
+      if (!seen.has(m[1])) { seen.add(m[1]); pairs.push(`${m[1]}=`); }
+    }
+    // Match params["key"] / params['key']
+    const bracketRegex = /params\[["']([^"']+)["']\]/g;
+    while ((m = bracketRegex.exec(code)) !== null) {
+      if (!seen.has(m[1])) { seen.add(m[1]); pairs.push(`${m[1]}=`); }
+    }
+    return pairs.join(';');
+  };
+
   const handleLoadScript = (script) => {
     console.log('[MapsScriptHelper] Loading script:', script.name);
     console.log('[MapsScriptHelper] Script code length:', script.code?.length || 0);
@@ -2889,6 +3107,14 @@ if __name__ == "__main__":
     }
     // Set current script so we can update it directly
     setCurrentScript(script);
+    // Use saved parameters, or auto-detect from code if none were saved
+    const savedParams = script.script_parameters || '';
+    if (savedParams) {
+      setScriptParameters(savedParams);
+    } else {
+      const detected = detectParametersFromCode(script.code);
+      setScriptParameters(detected);
+    }
 
     // If the script has an associated community image, auto-select it
     if (script.community_image_id && script.community_image_url) {
@@ -3005,6 +3231,25 @@ if __name__ == "__main__":
     }
   };
 
+  const handleDownloadScript = () => {
+    const currentCode = monacoEditorRef.current ? monacoEditorRef.current.getValue() : code;
+    if (!currentCode || currentCode.trim().length === 0) {
+      showToast('No code to download.', 'error');
+      return;
+    }
+    const filename = currentScript ? currentScript.name.replace(/[^a-zA-Z0-9_\-]/g, '_') + '.py' : 'script.py';
+    const blob = new Blob([currentCode], { type: 'text/x-python' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Script downloaded!', 'success');
+  };
+
   const handleRun = async (overrideImage = null) => {
     // Filter out event objects passed by onClick handlers
     // Only accept override if it's actually an image object with an 'id' property
@@ -3033,6 +3278,7 @@ if __name__ == "__main__":
     }
     
     fd.append('code', currentCode);
+    fd.append('script_parameters', scriptParameters || '');
     
     // Add user_id when logged in (not for guest)
     if (currentUser?.id) {
@@ -3728,6 +3974,16 @@ if __name__ == "__main__":
               setActiveTab('code');
               setEditorKey(prev => prev + 1);
             }
+
+            // Apply suggested parameters from AI response, or fall back to auto-detection
+            if (data.suggested_parameters) {
+              setScriptParameters(data.suggested_parameters);
+            } else {
+              const detectedParams = detectParametersFromCode(codeToSet);
+              if (detectedParams && !scriptParameters) {
+                setScriptParameters(detectedParams);
+              }
+            }
           } else if (data.suggested_code === '') {
             console.warn('[MapsScriptHelper] ⚠️ Empty suggested_code received (empty string)');
           } else {
@@ -3934,7 +4190,9 @@ if __name__ == "__main__":
                 .map(s => {
                   const age = now - new Date(s.updated_at || s.created_at).getTime();
                   const recencyBonus = age < SEVEN_DAYS ? 1.5 * (1 - age / SEVEN_DAYS) : 0;
-                  const score = (s.rating_average || 0) + recencyBonus + Math.random() * 2;
+                  // Use a stable hash from the script id for deterministic "randomness"
+                  const stableJitter = ((s.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 200) / 100;
+                  const score = (s.rating_average || 0) + recencyBonus + stableJitter;
                   return { script: s, score };
                 })
                 .sort((a, b) => b.score - a.score)
@@ -4183,6 +4441,7 @@ if __name__ == "__main__":
                       className="clear-script-btn"
                       onClick={() => {
                         setCurrentScript(null);
+                        setScriptParameters('');
                         if (monacoEditorRef.current) {
                           monacoEditorRef.current.setValue('');
                         }
@@ -4200,6 +4459,68 @@ if __name__ == "__main__":
                     <span className="material-symbols-outlined" style={{fontSize: '18px'}}>play_arrow</span>
                     {!isPanelCollapsed && 'Run'}
                   </button>
+                  {!isPanelCollapsed && (
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
+                      flex: 1,
+                      minWidth: 0
+                    }}>
+                      <label style={{
+                        fontSize: '10px',
+                        fontWeight: 500,
+                        color: isDark ? '#9ca3af' : '#888',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '2px'
+                      }}>
+                        <span className="material-symbols-outlined" style={{fontSize: '12px'}}>tune</span>
+                        Params
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <input
+                        type="text"
+                        value={scriptParameters}
+                        onChange={(e) => setScriptParameters(e.target.value)}
+                        placeholder='e.g. threshold=128;mode=fast'
+                        title="Script parameters — available in your script as request.script_parameters"
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          border: `1px solid ${isDark ? '#444' : '#ccc'}`,
+                          background: isDark ? '#1a1f2e' : '#fff',
+                          color: isDark ? '#e5e7eb' : '#333',
+                          fontSize: '12px',
+                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                          outline: 'none'
+                        }}
+                      />
+                      <button
+                        onClick={() => setShowParamEditor(true)}
+                        title="Edit parameters"
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          width: '28px',
+                          height: '28px',
+                          minWidth: '28px',
+                          border: `1px solid ${isDark ? '#444' : '#ccc'}`,
+                          borderRadius: '6px',
+                          background: isDark ? '#1a1f2e' : '#fff',
+                          color: isDark ? '#9ca3af' : '#666',
+                          cursor: 'pointer',
+                          padding: 0
+                        }}
+                      >
+                        <span className="material-symbols-outlined" style={{fontSize: '16px'}}>edit</span>
+                      </button>
+                      </div>
+                    </div>
+                  )}
                   <button className="md-button md-button-outlined" onClick={handleSaveButtonClick} title={currentScript && currentScript.is_user_created ? `Update "${currentScript.name}"` : "Save script to My Scripts"}>
                     <span className="material-symbols-outlined" style={{fontSize: '18px'}}>save</span>
                     {!isPanelCollapsed && (currentScript && currentScript.is_user_created ? 'Update' : 'Save Script')}
@@ -4214,10 +4535,14 @@ if __name__ == "__main__":
                     <span className="material-symbols-outlined" style={{fontSize: '18px'}}>content_copy</span>
                     {!isPanelCollapsed && 'Copy Code'}
                   </button>
+                  <button className="md-button md-button-outlined" onClick={handleDownloadScript} title="Download script as .py file">
+                    <span className="material-symbols-outlined" style={{fontSize: '18px'}}>download</span>
+                    {!isPanelCollapsed && 'Download'}
+                  </button>
                 </div>
                 
                 {/* Image Selection Buttons */}
-                <div className="image-selection-buttons" style={{padding: isPanelCollapsed ? '8px' : '12px', borderTop: '1px solid #e0e0e0'}}>
+                <div className="image-selection-buttons" style={{padding: isPanelCollapsed ? '8px' : '12px', borderTop: `1px solid ${isDark ? '#333' : '#e0e0e0'}`}}>
                   {isPanelCollapsed ? (
                     <>
                       <button 
@@ -4454,6 +4779,14 @@ if __name__ == "__main__":
               onSelect={handleLibraryImageSelectFromModal}
               libraryImages={libraryImages}
             />
+            <ParameterEditorModal
+              isOpen={showParamEditor}
+              onClose={() => setShowParamEditor(false)}
+              value={scriptParameters}
+              onChange={setScriptParameters}
+              isDark={isDark}
+            />
+
             <UploadModal
               isOpen={showUploadModal && activeTab === 'code'}
               onClose={() => {
@@ -5132,23 +5465,6 @@ if __name__ == "__main__":
                               {script.is_community ? 'Shared' : 'My Script'}
                             </div>
                             <div className="script-card-actions">
-                              {script.is_community ? (
-                                <button
-                                  className="script-action-btn script-unshare-btn"
-                                  onClick={(e) => { e.stopPropagation(); handleUnpublish(script.id); }}
-                                  title="Remove from Community"
-                                >
-                                  <span className="material-symbols-outlined">visibility_off</span>
-                                </button>
-                              ) : (
-                                <button
-                                  className="script-action-btn script-share-btn"
-                                  onClick={(e) => { e.stopPropagation(); handlePublishToCommunity(script); }}
-                                  title="Share to Community"
-                                >
-                                  <span className="material-symbols-outlined">share</span>
-                                </button>
-                              )}
                               <button 
                                 className="script-action-btn script-delete-btn"
                                 onClick={(e) => {
@@ -5171,12 +5487,29 @@ if __name__ == "__main__":
                                 <span className="material-symbols-outlined">arrow_forward</span>
                                 Load Script
                               </span>
-                              {script.is_community && (
-                                <span className="community-shared-indicator" title="Shared with community">
-                                  <span className="material-symbols-outlined" style={{fontSize: '14px'}}>groups</span>
-                                </span>
-                              )}
                             </div>
+                            {script.is_community ? (
+                              <div className="community-status-bar community-status-shared">
+                                <span className="material-symbols-outlined">groups</span>
+                                <span className="community-status-label">Shared with Community</span>
+                                <button
+                                  className="community-status-action"
+                                  onClick={(e) => { e.stopPropagation(); handleUnpublish(script.id); }}
+                                  title="Remove from Community"
+                                >
+                                  <span className="material-symbols-outlined">close</span>
+                                  Remove
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                className="community-share-btn"
+                                onClick={(e) => { e.stopPropagation(); handlePublishToCommunity(script); }}
+                              >
+                                <span className="material-symbols-outlined">share</span>
+                                Share to Community
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -5596,6 +5929,19 @@ if __name__ == "__main__":
                         <li><a href="#why-helpers">Why Use Helpers?</a></li>
                       </ul>
                     </div>
+
+                    <div className="help-nav-section">
+                      <div className="help-nav-section-title">Resources</div>
+                      <ul className="help-nav-list">
+                        <li><a href="#resources">Documents</a></li>
+                        <li>
+                          <a href="/Script%20Bridge%20Guide.pdf" target="_blank" rel="noopener noreferrer" style={{display:'flex', alignItems:'center', gap:'6px'}}>
+                            <span className="material-symbols-outlined" style={{fontSize:'16px'}}>picture_as_pdf</span>
+                            Script Bridge Guide (PDF)
+                          </a>
+                        </li>
+                      </ul>
+                    </div>
                   </nav>
 
                   {/* Main Content */}
@@ -5950,6 +6296,17 @@ MapsBridge.report_failure("Fatal error")  # terminates script`}</code></pre>
                       <pre><code>{`layer_info = MapsBridge.get_layer_info("My Layer Name", request_full_info=True)
 if layer_info.layer_exists:
     MapsBridge.log_info(f"Found layer: {layer_info.name}")`}</code></pre>
+
+                      <h3>Tile filename helpers</h3>
+                      <pre><code>{`# Generate standard tile image filename
+filename = MapsBridge.get_tile_image_file_name(row, col, channel_idx, plane_idx, time_frame)
+# e.g. "Tile_001-001-000000_0-000.tiff"
+
+# XT (slice/energy) variant
+xt_name = MapsBridge.get_tile_xt_image_file_name(row, col, channel_idx, plane_idx, time_frame, slice=1, energy=0)
+
+# EDS shortcut
+eds_name = MapsBridge.get_tile_eds_image_file_name(row, col, channel_idx)`}</code></pre>
                     </section>
 
                     {/* OUTPUT */}
@@ -6662,6 +7019,49 @@ input_path = request.prepared_images["0"]`}</code></pre>
                         teams, the full API gives you consistency and fewer bugs.
                       </p>
                     </section>
+
+                    {/* RESOURCES */}
+                    <section id="resources">
+                      <h2>Resources</h2>
+                      <p>Additional documentation and reference material.</p>
+                      <div className="help-card">
+                        <div className="help-card-header">
+                          <span className="help-card-title" style={{display:'flex', alignItems:'center', gap:'8px'}}>
+                            <span className="material-symbols-outlined" style={{fontSize:'20px', color: isDark ? '#f87171' : '#dc2626'}}>picture_as_pdf</span>
+                            Script Bridge Guide
+                          </span>
+                          <span className="help-badge">PDF</span>
+                        </div>
+                        <div className="help-card-body">
+                          <p>
+                            Complete reference guide for the Maps Script Bridge plugin — covers UI, script execution modes,
+                            JSON API, security, and the full MapsBridge Python library reference.
+                          </p>
+                          <a
+                            href="/Script%20Bridge%20Guide.pdf"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '8px 16px',
+                              borderRadius: '8px',
+                              background: isDark ? 'rgba(96, 165, 250, 0.15)' : 'rgba(37, 99, 235, 0.1)',
+                              color: isDark ? '#60a5fa' : '#2563eb',
+                              fontWeight: 500,
+                              fontSize: '0.9rem',
+                              textDecoration: 'none',
+                              border: `1px solid ${isDark ? 'rgba(96, 165, 250, 0.3)' : 'rgba(37, 99, 235, 0.2)'}`,
+                              marginTop: '4px'
+                            }}
+                          >
+                            <span className="material-symbols-outlined" style={{fontSize:'18px'}}>open_in_new</span>
+                            View Script Bridge Guide
+                          </a>
+                        </div>
+                      </div>
+                    </section>
                   </main>
                 </div>
               </div>
@@ -6694,7 +7094,7 @@ input_path = request.prepared_images["0"]`}</code></pre>
                 className="new-chat-button"
                 onClick={() => {
                   setMessages([]);
-                  setAiModel('codex-mini-latest'); // Reset to default model
+                  setAiModel('gpt-5-mini'); // Reset to default model
                   // Clear code editor
                   if (monacoEditorRef.current) {
                     monacoEditorRef.current.setValue('');
@@ -6979,6 +7379,16 @@ input_path = request.prepared_images["0"]`}</code></pre>
                                         setCurrentScript(null);
                                         setActiveTab('code');
                                         setEditorKey(prev => prev + 1);
+                                      }
+
+                                      // Apply suggested parameters from AI response, or fall back to auto-detection
+                                      if (data.suggested_parameters) {
+                                        setScriptParameters(data.suggested_parameters);
+                                      } else {
+                                        const detectedParams = detectParametersFromCode(codeToSet);
+                                        if (detectedParams && !scriptParameters) {
+                                          setScriptParameters(detectedParams);
+                                        }
                                       }
                                     } else {
                                       console.log('[MapsScriptHelper] [QUICK REPLY] ℹ️ No code update - AI response was text-only');

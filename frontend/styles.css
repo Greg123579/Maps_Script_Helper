@@ -5144,6 +5144,100 @@ body.dark-theme {
   color: #7b1fa2;
 }
 
+/* Always-visible "Share to Community" button at card bottom */
+.community-share-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 16px;
+  margin-top: 8px;
+  border: 1.5px dashed #b39ddb;
+  border-radius: 12px;
+  background: #f5f0ff;
+  color: #7b1fa2;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  letter-spacing: 0.2px;
+}
+
+.community-share-btn .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.community-share-btn:hover {
+  background: #ede7f6;
+  border-color: #7b1fa2;
+  box-shadow: 0 2px 8px rgba(123, 31, 162, 0.15);
+  transform: translateY(-1px);
+}
+
+.community-share-btn:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+/* "Shared with Community" status bar */
+.community-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  margin-top: 8px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.community-status-bar > .material-symbols-outlined {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.community-status-shared {
+  background: #f3e5f5;
+  color: #7b1fa2;
+  border: 1px solid #ce93d8;
+}
+
+.community-status-label {
+  flex: 1;
+}
+
+.community-status-action {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #7b1fa2;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  opacity: 0;
+}
+
+.community-status-action .material-symbols-outlined {
+  font-size: 14px;
+}
+
+.script-card:hover .community-status-action {
+  opacity: 1;
+}
+
+.community-status-action:hover {
+  background: rgba(123, 31, 162, 0.08);
+  border-color: #ce93d8;
+  color: #9c27b0;
+}
+
 /* Script card action buttons row */
 .script-card-actions {
   position: absolute;
@@ -5273,6 +5367,34 @@ body.dark-theme {
   background: #4a1a5e;
   border-color: #ce93d8;
   color: #ce93d8;
+}
+
+.dark-theme .community-share-btn {
+  background: rgba(206, 147, 216, 0.08);
+  border-color: #7c5c8a;
+  color: #ce93d8;
+}
+
+.dark-theme .community-share-btn:hover {
+  background: rgba(206, 147, 216, 0.15);
+  border-color: #ce93d8;
+  box-shadow: 0 2px 8px rgba(206, 147, 216, 0.2);
+}
+
+.dark-theme .community-status-shared {
+  background: rgba(206, 147, 216, 0.1);
+  color: #ce93d8;
+  border-color: #7c5c8a;
+}
+
+.dark-theme .community-status-action {
+  color: #ce93d8;
+}
+
+.dark-theme .community-status-action:hover {
+  background: rgba(206, 147, 216, 0.12);
+  border-color: #7c5c8a;
+  color: #e1bee7;
 }
 
 .dark-theme .publish-image-option {

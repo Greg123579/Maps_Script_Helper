@@ -1,12 +1,11 @@
 """
-MapsBridge.py - Shim module for MAPS Script Bridge v1.1.0 compatibility
+MapsBridge.py - Shim module for MAPS Script Bridge v1.1.0
 
 Version: 1.1.0 (API aligned with official Thermo Fisher MapsBridge)
 Author: Thermo Fisher Scientific (shim by Maps Script Helper)
 
-This shim matches the official MapsBridge API surface so scripts written for MAPS
-run in the helper without modification. PascalCase aliases (FromStdIn, LogInfo,
-GetOrCreateOutputTileSet, etc.) are provided for compatibility.
+This shim matches the official MapsBridge v1.1.0 API surface so scripts written
+for MAPS run in the helper without modification. All names use snake_case.
 
 Real MAPS: from_stdin() reads JSON from stdin; output functions send JSON to stdout.
 This helper: from_stdin() builds a request from /input images; output functions
@@ -20,8 +19,8 @@ import uuid
 import json
 import tempfile
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple, Any, Iterable
-from dataclasses import dataclass, field
+from typing import Optional, Dict, List, Tuple, Any
+from dataclasses import dataclass
 
 try:
     from PIL import Image
@@ -51,6 +50,13 @@ class PointInt:
     def __len__(self):
         return 2
 
+    @staticmethod
+    def from_json(data: dict) -> "PointInt":
+        try:
+            return PointInt(x=int(data["X"]), y=int(data["Y"]))
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError("PointInt JSON must contain 'X' and 'Y' with int values") from e
+
 
 @dataclass
 class PointFloat:
@@ -62,6 +68,13 @@ class PointFloat:
 
     def __len__(self):
         return 2
+
+    @staticmethod
+    def from_json(data: dict) -> "PointFloat":
+        try:
+            return PointFloat(x=float(data["X"]), y=float(data["Y"]))
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError("PointFloat JSON must contain 'X' and 'Y' with float values") from e
 
 
 @dataclass
@@ -75,6 +88,13 @@ class SizeInt:
     def __len__(self):
         return 2
 
+    @staticmethod
+    def from_json(data: dict) -> "SizeInt":
+        try:
+            return SizeInt(width=int(data["Width"]), height=int(data["Height"]))
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError("SizeInt JSON must contain 'Width' and 'Height' with int values") from e
+
 
 @dataclass
 class SizeFloat:
@@ -87,22 +107,28 @@ class SizeFloat:
     def __len__(self):
         return 2
 
+    @staticmethod
+    def from_json(data: dict) -> "SizeFloat":
+        try:
+            return SizeFloat(width=float(data["Width"]), height=float(data["Height"]))
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError("SizeFloat JSON must contain 'Width' and 'Height' with float values") from e
 
-@dataclass
+
+@dataclass(frozen=True)
 class Tile:
     column: int
     row: int
 
-    @property
-    def Column(self) -> int:
-        return self.column
+    @staticmethod
+    def from_json(data: dict) -> "Tile":
+        try:
+            return Tile(column=int(data["Column"]), row=int(data["Row"]))
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError("Tile JSON must contain 'Column' and 'Row' with int values") from e
 
-    @property
-    def Row(self) -> int:
-        return self.row
 
-
-@dataclass
+@dataclass(frozen=True)
 class TileInfo:
     column: int
     row: int
@@ -110,31 +136,57 @@ class TileInfo:
     tile_center_pixel_offset: PointInt
     image_file_names: Dict[str, str]
 
-    @property
-    def ImageFileNames(self) -> Dict[str, str]:
-        return self.image_file_names
-
-    @property
-    def Column(self) -> int:
-        return self.column
-
-    @property
-    def Row(self) -> int:
-        return self.row
+    @staticmethod
+    def from_json(tile_data: dict) -> "TileInfo":
+        return TileInfo(
+            column=int(tile_data["Column"]),
+            row=int(tile_data["Row"]),
+            stage_position=PointFloat.from_json(tile_data["StagePosition"]),
+            tile_center_pixel_offset=PointInt.from_json(tile_data["TileCenterPixelOffset"]),
+            image_file_names=tile_data["ImageFileNames"]
+        )
 
 
-@dataclass
+@dataclass(frozen=True)
 class ChannelInfo:
     index: int
     name: str
     color: str
 
+    @staticmethod
+    def from_json(data: dict) -> "ChannelInfo":
+        try:
+            return ChannelInfo(
+                index=int(data["Index"]),
+                name=data["Name"],
+                color=data["Color"]
+            )
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError("ChannelInfo JSON must contain 'Index', 'Color', and 'Name'") from e
 
-@dataclass
+
+@dataclass(frozen=True)
 class Confirmation:
     is_success: bool
     warning_message: str = ""
     error_message: str = ""
+
+    @staticmethod
+    def from_stdin() -> "Confirmation":
+        json_input = sys.stdin.readline()
+        data = json.loads(json_input)
+        return Confirmation.from_json(data)
+
+    @staticmethod
+    def from_json(data: dict) -> "Confirmation":
+        try:
+            return Confirmation(
+                is_success=data["IsSuccess"],
+                warning_message=data.get("WarningMessage", ""),
+                error_message=data.get("ErrorMessage", "")
+            )
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError("Confirmation JSON incorrect") from e
 
 
 @dataclass
@@ -161,21 +213,34 @@ class TileSetInfo:
     channels: List[ChannelInfo]
     tiles: List[TileInfo]
 
-    @property
-    def DataFolderPath(self) -> str:
-        return self.data_folder_path
-
-    @property
-    def Tiles(self) -> List[TileInfo]:
-        return self.tiles
-
-    @property
-    def Guid(self) -> uuid.UUID:
-        return self.guid
-
-    @property
-    def Name(self) -> str:
-        return self.name
+    @staticmethod
+    def from_json(source_tile_layer_data: dict) -> "TileSetInfo":
+        if source_tile_layer_data is None:
+            return None
+        tile_list = [TileInfo.from_json(t) for t in source_tile_layer_data["Tiles"]]
+        return TileSetInfo(
+            guid=uuid.UUID(source_tile_layer_data["Guid"]),
+            name=source_tile_layer_data["Name"],
+            data_folder_path=source_tile_layer_data["DataFolderPath"],
+            column_count=int(source_tile_layer_data["ColumnCount"]),
+            row_count=int(source_tile_layer_data["RowCount"]),
+            channel_count=int(source_tile_layer_data["ChannelCount"]),
+            is_completed=source_tile_layer_data["IsCompleted"],
+            size=SizeFloat.from_json(source_tile_layer_data["Size"]),
+            tile_size=SizeFloat.from_json(source_tile_layer_data["TileSize"]),
+            tile_resolution=SizeInt.from_json(source_tile_layer_data["TileResolution"]),
+            pixel_format=source_tile_layer_data["PixelFormat"],
+            stage_position=PointFloat.from_json(source_tile_layer_data["StagePosition"]),
+            rotation=float(source_tile_layer_data["Rotation"]),
+            pixel_to_stage_matrix=source_tile_layer_data["PixelToStageMatrix"],
+            acquisition_stage_position=PointFloat.from_json(source_tile_layer_data["AcquisitionStagePosition"]),
+            acquisition_stage_rotation=float(source_tile_layer_data["AcquisitionStageRotation"]),
+            acquisition_rotation=float(source_tile_layer_data["AcquisitionRotation"]),
+            horizontal_overlap=float(source_tile_layer_data["HorizontalOverlap"]),
+            vertical_overlap=float(source_tile_layer_data["VerticalOverlap"]),
+            channels=[ChannelInfo.from_json(c) for c in source_tile_layer_data["Channels"]],
+            tiles=tile_list
+        )
 
 
 @dataclass
@@ -190,14 +255,39 @@ class ImageLayerInfo:
     pixel_to_stage_matrix: List[List[float]]
     original_tile_set: Optional[TileSetInfo] = None
 
+    @staticmethod
+    def from_json(image_layer_data: dict) -> "ImageLayerInfo":
+        original_tile_set = TileSetInfo.from_json(image_layer_data.get("OriginalTileSet"))
+        return ImageLayerInfo(
+            guid=uuid.UUID(image_layer_data["Guid"]),
+            name=image_layer_data["Name"],
+            stage_position=PointFloat.from_json(image_layer_data["StagePosition"]),
+            rotation=float(image_layer_data["Rotation"]),
+            data_folder_path=image_layer_data["DataFolderPath"],
+            size=SizeFloat.from_json(image_layer_data["Size"]),
+            total_layer_resolution=SizeInt.from_json(image_layer_data["TotalLayerResolution"]),
+            pixel_to_stage_matrix=image_layer_data["PixelToStageMatrix"],
+            original_tile_set=original_tile_set
+        )
 
-@dataclass
+
+@dataclass(frozen=True)
 class AnnotationInfo:
     guid: uuid.UUID
     name: str
     stage_position: PointFloat
     rotation: float
     size: SizeFloat
+
+    @staticmethod
+    def from_json(annotation_data: dict) -> "AnnotationInfo":
+        return AnnotationInfo(
+            guid=uuid.UUID(annotation_data["Guid"]),
+            name=annotation_data["Name"],
+            stage_position=PointFloat.from_json(annotation_data["StagePosition"]),
+            rotation=float(annotation_data["Rotation"]),
+            size=SizeFloat.from_json(annotation_data["Size"])
+        )
 
 
 @dataclass
@@ -207,6 +297,35 @@ class LayerInfo:
     name: Optional[str] = None
     layer_type: Optional[str] = None
     layer_info: Any = None
+
+    @staticmethod
+    def from_json(layer_info_data: dict) -> "LayerInfo":
+        layer_exists = layer_info_data["LayerExists"]
+        if layer_exists:
+            guid = uuid.UUID(layer_info_data["LayerGuid"])
+            name = layer_info_data["LayerName"]
+            layer_type = layer_info_data["LayerType"]
+            info_data = layer_info_data["LayerInfo"]
+            if layer_type == "TileSet":
+                layer_info = TileSetInfo.from_json(info_data)
+            elif layer_type == "ImageLayer":
+                layer_info = ImageLayerInfo.from_json(info_data)
+            elif layer_type == "Annotation":
+                layer_info = AnnotationInfo.from_json(info_data)
+            else:
+                layer_info = None
+        else:
+            guid = None
+            name = None
+            layer_type = None
+            layer_info = None
+        return LayerInfo(
+            layer_exists=layer_exists,
+            guid=guid,
+            name=name,
+            layer_type=layer_type,
+            layer_info=layer_info
+        )
 
 
 # ============================================================================
@@ -225,16 +344,25 @@ class ScriptRequest:
         self.script_name = script_name
         self.script_parameters = script_parameters
 
-    @property
-    def ScriptParameters(self) -> str:
-        return self.script_parameters
+    @staticmethod
+    def from_json(json_input: str) -> "ScriptRequest":
+        try:
+            data = json.loads(json_input)
+        except Exception as e:
+            raise ValueError("Invalid JSON input") from e
+        try:
+            return ScriptRequest(
+                data["RequestType"],
+                uuid.UUID(data["RequestGuid"]),
+                data["ScriptName"],
+                data["ScriptParameters"]
+            )
+        except KeyError as e:
+            raise ValueError(f"Missing expected key in JSON input: {e}") from e
 
     @staticmethod
     def from_stdin() -> "ScriptRequest":
         return read_request_from_stdin()
-
-    # PascalCase alias for MAPS Script Bridge compatibility
-    FromStdIn = from_stdin
 
 
 class ScriptTileSetRequest(ScriptRequest):
@@ -247,13 +375,26 @@ class ScriptTileSetRequest(ScriptRequest):
         self.source_tile_set = source_tile_set
         self.tiles_to_process = tiles_to_process
 
-    @property
-    def SourceTileSet(self) -> TileSetInfo:
-        return self.source_tile_set
-
-    @property
-    def TilesToProcess(self) -> List[Tile]:
-        return self.tiles_to_process
+    @staticmethod
+    def from_json(json_input: str) -> "ScriptTileSetRequest":
+        try:
+            data = json.loads(json_input)
+        except Exception as e:
+            raise ValueError("Invalid JSON input") from e
+        try:
+            source_tile_layer_data = data["SourceTileSet"]
+            source_tile_set = TileSetInfo.from_json(source_tile_layer_data)
+            tiles = [Tile.from_json(t) for t in data["TilesToProcess"]]
+            return ScriptTileSetRequest(
+                data["RequestType"],
+                uuid.UUID(data["RequestGuid"]),
+                data["ScriptName"],
+                data["ScriptParameters"],
+                source_tile_set,
+                tiles
+            )
+        except KeyError as e:
+            raise ValueError(f"Missing expected key in JSON input: {e}") from e
 
     @staticmethod
     def from_stdin() -> "ScriptTileSetRequest":
@@ -350,9 +491,6 @@ class ScriptTileSetRequest(ScriptRequest):
         _debug(f"Created ScriptTileSetRequest with {len(tiles)} tiles")
         return request
 
-    # PascalCase alias for MAPS Script Bridge compatibility
-    FromStdIn = from_stdin
-
 
 class ScriptImageLayerRequest(ScriptRequest):
     source_image_layer: ImageLayerInfo
@@ -363,6 +501,19 @@ class ScriptImageLayerRequest(ScriptRequest):
         super().__init__(request_type, request_guid, script_name, script_parameters)
         self.source_image_layer = source_image_layer
         self.prepared_images = prepared_images
+
+    @staticmethod
+    def from_json(json_input: str) -> "ScriptImageLayerRequest":
+        data = json.loads(json_input)
+        source_image_layer = ImageLayerInfo.from_json(data["SourceImageLayer"])
+        return ScriptImageLayerRequest(
+            data["RequestType"],
+            uuid.UUID(data["RequestGuid"]),
+            data["ScriptName"],
+            data["ScriptParameters"],
+            source_image_layer,
+            data["PreparedImages"]
+        )
 
     @staticmethod
     def from_stdin() -> "ScriptImageLayerRequest":
@@ -431,38 +582,72 @@ class ScriptImageLayerRequest(ScriptRequest):
         _debug(f"Created ScriptImageLayerRequest with {len(prepared_images)} prepared images")
         return request
 
-    # PascalCase alias for MAPS Script Bridge compatibility
-    FromStdIn = from_stdin
-
 
 # ============================================================================
 # Result / Confirmation Classes
 # ============================================================================
 
-@dataclass
+@dataclass(frozen=True)
 class TileSetCreateInfo:
     is_success: bool
     error_message: str
     is_created: bool
     tile_set: Optional[TileSetInfo] = None
 
-    @property
-    def TileSet(self) -> Optional[TileSetInfo]:
-        return self.tile_set
+    @staticmethod
+    def from_json(json_input: str) -> "TileSetCreateInfo":
+        data = json.loads(json_input)
+        is_success = data["IsSuccess"]
+        error_message = data.get("ErrorMessage", "")
+        is_created = data.get("IsCreated", False)
+        tile_set_data = data.get("TileSet", None)
+        tile_set = TileSetInfo.from_json(tile_set_data) if tile_set_data is not None else None
+        return TileSetCreateInfo(
+            is_success=is_success,
+            error_message=error_message,
+            is_created=is_created,
+            tile_set=tile_set
+        )
 
 
-@dataclass
+@dataclass(frozen=True)
 class ImageLayerCreateInfo:
     is_success: bool
     error_message: str
     image_layer: Optional[ImageLayerInfo] = None
 
+    @staticmethod
+    def from_json(json_input: str) -> "ImageLayerCreateInfo":
+        data = json.loads(json_input)
+        is_success = data["IsSuccess"]
+        error_message = data.get("ErrorMessage", "")
+        image_layer_data = data.get("ImageLayer", None)
+        image_layer = ImageLayerInfo.from_json(image_layer_data) if image_layer_data is not None else None
+        return ImageLayerCreateInfo(
+            is_success=is_success,
+            error_message=error_message,
+            image_layer=image_layer
+        )
 
-@dataclass
+
+@dataclass(frozen=True)
 class AnnotationCreateInfo:
     is_success: bool
     error_message: str
     annotation: Optional[AnnotationInfo] = None
+
+    @staticmethod
+    def from_json(json_input: str) -> "AnnotationCreateInfo":
+        data = json.loads(json_input)
+        is_success = data["IsSuccess"]
+        error_message = data.get("ErrorMessage", "")
+        annotation_data = data.get("Annotation", None)
+        annotation = AnnotationInfo.from_json(annotation_data) if annotation_data is not None else None
+        return AnnotationCreateInfo(
+            is_success=is_success,
+            error_message=error_message,
+            annotation=annotation
+        )
 
 
 # ============================================================================
@@ -498,14 +683,8 @@ def get_or_create_output_tile_set(
     tile_set_name: Optional[str] = None,
     tile_resolution: Optional[Tuple[int, int]] = None,
     target_layer_group_name: Optional[str] = None,
-    request_confirmation: Optional[bool] = True,
-    **kwargs
+    request_confirmation: Optional[bool] = True
 ) -> Optional[TileSetCreateInfo]:
-    # Accept camelCase kwargs for MAPS script compatibility
-    tile_set_name = kwargs.get("tileSetName", tile_set_name)
-    tile_resolution = kwargs.get("tileResolution", tile_resolution)
-    target_layer_group_name = kwargs.get("targetLayerGroupName", target_layer_group_name)
-    request_confirmation = kwargs.get("requestConfirmation", request_confirmation)
     for guid_str, info in _tile_sets.items():
         if info.get("name") == tile_set_name:
             _debug(f"Found existing tile set: {tile_set_name}")
@@ -1040,6 +1219,31 @@ def report_activity_description(activity_description: str) -> None:
 
 
 # ============================================================================
+# Parameter Parsing
+# ============================================================================
+
+def parse_parameters(raw: str | None) -> dict:
+    """Parse a semicolon-delimited key=value parameter string into a dict.
+
+    Accepts strings like ``"threshold=128;mode=fast"`` and returns
+    ``{"threshold": "128", "mode": "fast"}``.  All keys and values are
+    stripped of whitespace.  Keys without a ``=`` are ignored.
+
+    Returns an empty dict when *raw* is ``None`` or empty.
+    """
+    if not raw:
+        return {}
+    params: dict = {}
+    for pair in raw.split(";"):
+        if "=" in pair:
+            k, v = pair.split("=", 1)
+            k = k.strip()
+            if k:
+                params[k] = v.strip()
+    return params
+
+
+# ============================================================================
 # Tile Filename Helpers
 # ============================================================================
 
@@ -1095,44 +1299,6 @@ def _scan_input_images(input_dir: Path) -> List[Path]:
     image_files = sorted(set(image_files))
     _debug(f"Total image files found: {len(image_files)}")
     return image_files
-
-
-# ============================================================================
-# PascalCase aliases for MAPS Script Bridge v1.1.0 compatibility
-# (must be after ALL function definitions)
-# ============================================================================
-
-LogInfo = log_info
-LogWarning = log_warning
-LogError = log_error
-ReportFailure = report_failure
-ReportProgress = report_progress
-ReportActivityDescription = report_activity_description
-SendSingleTileOutput = send_single_tile_output
-SendSingleTileOutputAsync = send_single_tile_output_async
-StoreFile = store_file
-StoreFileAsync = store_file_async
-GetOrCreateOutputTileSet = get_or_create_output_tile_set
-GetOrCreateOutputTileSetAsync = get_or_create_output_tile_set_async
-CreateTileSet = create_tile_set
-CreateTileSetAsync = create_tile_set_async
-CreateChannel = create_channel
-CreateChannelAsync = create_channel_async
-AppendNotes = append_notes
-AppendNotesAsync = append_notes_async
-ReadRequestFromStdIn = read_request_from_stdin
-GetTileInfo = get_tile_info
-GetLayerInfo = get_layer_info
-CreateImageLayer = create_image_layer
-CreateImageLayerAsync = create_image_layer_async
-CreateAnnotation = create_annotation
-CreateAnnotationAsync = create_annotation_async
-TilePixelToStage = tile_pixel_to_stage
-ImagePixelToStage = image_pixel_to_stage
-CalculateTotalPixelPosition = calculate_total_pixel_position
-GetTileImageFileName = get_tile_image_file_name
-GetTileXtImageFileName = get_tile_xt_image_file_name
-GetTileEdsImageFileName = get_tile_eds_image_file_name
 
 
 # ============================================================================

@@ -810,8 +810,8 @@ def inject_debug_logging(code: str) -> str:
             var = line.split('=')[0].strip()
             result.append(f'{indent_str}print(f"[AUTO-DEBUG] cv2.imread: {var}, shape={{{var}.shape if {var} is not None else \'None\'}}, dtype={{{var}.dtype if {var} is not None else \'None\'}}")')
         
-        # After MapsBridge from_stdin calls (v1.1.0 snake_case or legacy PascalCase)
-        elif 'MapsBridge.' in line and ('from_stdin' in line or 'FromStdIn' in line) and '=' in line:
+        # After MapsBridge from_stdin calls (v1.1.0 snake_case)
+        elif 'MapsBridge.' in line and 'from_stdin' in line and '=' in line:
             var = line.split('=')[0].strip()
             result.append(f'{indent_str}print(f"[AUTO-DEBUG] MapsBridge request loaded: {var}, type={{type({var})}}")')
         
@@ -955,7 +955,8 @@ async def run_code(
     previous_attempt_id: Optional[str] = Form(None),
     user_prompt: Optional[str] = Form(None),
     ai_model: Optional[str] = Form(None),
-    inject_debug: Optional[str] = Form("false"),  # NEW: Allow explicit debug injection
+    inject_debug: Optional[str] = Form("false"),
+    script_parameters: Optional[str] = Form(""),
     db: Session = Depends(get_db),
 ):
     """
@@ -977,6 +978,7 @@ async def run_code(
     print(f"[RUN] Image provided: {image is not None}")
     print(f"[RUN] Use sample: {use_sample}")
     print(f"[RUN] User ID: {user_id}")
+    print(f"[RUN] Script parameters: {script_parameters!r}")
     print(f"{'='*80}\n")
     active_marker_path = None
     execution_record = None
@@ -1217,7 +1219,8 @@ async def run_code(
                   request_json=request_json,
                   input_path=str(in_dir),
                   output_path=str(out_dir),
-                  timeout=60
+                  timeout=60,
+                  script_parameters=script_parameters or ""
               )
           else:
               # Docker runner uses file paths
@@ -1227,7 +1230,8 @@ async def run_code(
                   request_path=str(request_json_path),
                   input_path=str(in_dir),
                   output_path=str(out_dir),
-                  timeout=60
+                  timeout=60,
+                  script_parameters=script_parameters or ""
               )
           
           # Check for timeout status
@@ -1530,7 +1534,7 @@ EVERY script will be run in MAPS eventually. Scripts must use MapsBridge API to:
 
 This ensures scripts work in BOTH the Helper App (for testing) AND real MAPS (for production).
 
-🚨 API VERSION: v1.1.0 — ALL names use snake_case (NOT PascalCase).
+🚨 API VERSION: v1.1.0 — ALL names use snake_case. PascalCase names are NOT supported.
 
 ═══════════════════════════════════════════════════════════════
           🔴 CODE UPDATE vs EXPLANATION QUESTIONS 🔴
@@ -1591,12 +1595,13 @@ Geometry types:
 
 Tile types:
   Tile:            .column, .row
-  TileInfo:        .column, .row, .stage_position (PointFloat), .tile_center_pixel_offset (PointFloat), .image_file_names (dict)
+  TileInfo:        .column, .row, .stage_position (PointFloat), .tile_center_pixel_offset (PointInt), .image_file_names (dict)
   ChannelInfo:     .index, .name, .color
 
 TileSetInfo:       .guid, .name, .data_folder_path, .column_count, .row_count, .channel_count,
                    .is_completed, .size (SizeFloat), .tile_size (SizeFloat), .tile_resolution (SizeInt), .pixel_format,
                    .stage_position (PointFloat), .rotation, .pixel_to_stage_matrix,
+                   .acquisition_stage_position (PointFloat), .acquisition_stage_rotation, .acquisition_rotation,
                    .horizontal_overlap, .vertical_overlap, .channels (list[ChannelInfo]), .tiles (list[TileInfo])
 
 ImageLayerInfo:    .guid, .name, .stage_position (PointFloat), .rotation, .data_folder_path,
@@ -1890,6 +1895,11 @@ Logging & reporting:
   MapsBridge.report_progress(progress_percentage)   — 0.0 to 100.0
   MapsBridge.report_activity_description(activity_description)
 
+Tile filename helpers:
+  MapsBridge.get_tile_image_file_name(tile_row, tile_column, channel_index, plane_index, time_frame, extension, plugin_info) → str
+  MapsBridge.get_tile_xt_image_file_name(tile_row, tile_column, channel_index, plane_index, time_frame, extension, slice, energy) → str
+  MapsBridge.get_tile_eds_image_file_name(tile_row, tile_column, channel_index) → str
+
 Async variants (fire-and-forget, no confirmation):
   MapsBridge.get_or_create_output_tile_set_async(...)
   MapsBridge.create_tile_set_async(...)
@@ -2006,6 +2016,35 @@ layer_info = MapsBridge.get_layer_info("MyLayerName", request_full_info=True)
 if layer_info.layer_exists:
     MapsBridge.log_info(f"Found layer: {layer_info.name}, type: {layer_info.layer_type}")
 ```
+
+═══════════════════════════════════════════════════════════════
+               SCRIPT PARAMETERS (User-Configurable Values)
+═══════════════════════════════════════════════════════════════
+
+When a script has user-configurable values (thresholds, colors, modes, etc.),
+use MapsBridge.parse_parameters() to read them from request.script_parameters.
+
+Format: semicolon-delimited key=value pairs, e.g. "threshold=128;color=red;mode=fast"
+
+Pattern:
+```python
+params = MapsBridge.parse_parameters(request.script_parameters)
+threshold = int(params.get("threshold", "128"))
+color = params.get("color", "red")
+```
+
+IMPORTANT — When your generated code uses parameters, you MUST include a
+SUGGESTED_PARAMS line at the END of your response (OUTSIDE any code block)
+so the UI can auto-populate the parameter field for the user:
+
+SUGGESTED_PARAMS: threshold=128;color=red;mode=fast
+
+Rules:
+✅ Use MapsBridge.parse_parameters(request.script_parameters) — never parse manually
+✅ Always provide sensible defaults via .get("key", "default")
+✅ Include SUGGESTED_PARAMS line with default values when code uses parameters
+✅ Keys should be short, descriptive, lowercase (e.g. threshold, color, sigma)
+❌ Do NOT include SUGGESTED_PARAMS if the script has no configurable parameters
 
 ═══════════════════════════════════════════════════════════════
                CODE UPDATE GUIDELINES
@@ -2388,9 +2427,18 @@ Your goal: Generate scripts that work on the first try using these proven patter
                 print(f"   Before: {original_text[:100]}")
                 print(f"   After:  {response_text[:100]}")
         
+        # Extract SUGGESTED_PARAMS from response text
+        suggested_parameters = None
+        params_match = re.search(r'^SUGGESTED_PARAMS:\s*(.+)$', response_text, re.MULTILINE)
+        if params_match:
+            suggested_parameters = params_match.group(1).strip()
+            response_text = re.sub(r'\n?SUGGESTED_PARAMS:\s*.+', '', response_text).strip()
+            print(f"🎛️ Extracted suggested parameters: {suggested_parameters}")
+
         result = {
             "response": response_text,
             "suggested_code": suggested_code,  # Code to update in editor
+            "suggested_parameters": suggested_parameters,  # Parameters to populate in UI
             "quick_replies": quick_replies,  # Quick reply buttons
             "success": True
         }
@@ -4120,6 +4168,7 @@ class UserScriptRequest(BaseModel):
     description: Optional[str] = ""
     code: str
     user_id: str  # Required for associating script with user
+    script_parameters: Optional[str] = ""
 
 @app.get("/api/user-scripts")
 def get_user_scripts(user_id: Optional[str] = None, db: Session = Depends(get_db)):
@@ -4163,6 +4212,7 @@ async def save_user_script(
             name=script.name,
             description=script.description or "",
             code=script.code,
+            script_parameters=script.script_parameters or "",
             is_user_created=True
         )
         db.add(new_script)
@@ -4210,6 +4260,7 @@ async def update_user_script(
         existing_script.name = script.name
         existing_script.description = script.description or ""
         existing_script.code = script.code
+        existing_script.script_parameters = script.script_parameters or ""
         existing_script.updated_at = datetime.utcnow()
         
         db.commit()

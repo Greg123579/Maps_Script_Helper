@@ -66,6 +66,7 @@ class UserScript(Base):
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text, default="")
     code = Column(Text, nullable=False)
+    script_parameters = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     is_favorite = Column(Boolean, default=False)
@@ -88,6 +89,7 @@ class UserScript(Base):
             "name": self.name,
             "description": self.description or "",
             "code": self.code,
+            "script_parameters": self.script_parameters or "",
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "is_favorite": self.is_favorite,

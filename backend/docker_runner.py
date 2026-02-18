@@ -38,7 +38,8 @@ class DockerRunner:
         request_path: str,
         input_path: str,
         output_path: str,
-        timeout: Optional[int] = None
+        timeout: Optional[int] = None,
+        script_parameters: str = ""
     ) -> Dict[str, Any]:
         """
         Execute a script in a Docker container.
@@ -50,6 +51,7 @@ class DockerRunner:
             input_path: Path to input directory on host
             output_path: Path to output directory on host
             timeout: Execution timeout in seconds
+            script_parameters: Free-form parameters string passed to the script via env var
         
         Returns:
             Dict with status, exit_code, stdout, stderr
@@ -90,6 +92,7 @@ class DockerRunner:
             "-v", f"{input_host}:/input:ro",
             "-v", f"{output_host}:/output",
             "-e", f"JOB_ID={job_id}",
+            "-e", f"MAPS_SCRIPT_PARAMETERS={script_parameters}",
             self.runner_image
         ]
         

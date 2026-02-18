@@ -155,7 +155,7 @@ Request classes:
 
 | Class | Properties |
 |-------|------------|
-| `ScriptRequest` | `request_type`, `request_guid`, `script_name`, `script_parameters` |
+| `ScriptRequest` | `request_type`, `request_guid`, `script_name`, `script_parameters` (semicolon key=value string — parse with `MapsBridge.parse_parameters()`) |
 | `ScriptTileSetRequest` | (inherits above) + `source_tile_set` (TileSetInfo), `tiles_to_process` (list[Tile]) |
 | `ScriptImageLayerRequest` | (inherits above) + `source_image_layer` (ImageLayerInfo), `prepared_images` (dict[str,str]) |
 
@@ -223,6 +223,13 @@ MapsBridge.report_progress(progress_percentage)       # 0.0 to 100.0
 MapsBridge.report_activity_description(activity_description)
 ```
 
+#### Tile filename helpers
+```python
+MapsBridge.get_tile_image_file_name(tile_row, tile_column, channel_index, plane_index, time_frame, extension, plugin_info) -> str
+MapsBridge.get_tile_xt_image_file_name(tile_row, tile_column, channel_index, plane_index, time_frame, extension, slice, energy) -> str
+MapsBridge.get_tile_eds_image_file_name(tile_row, tile_column, channel_index) -> str
+```
+
 #### Async variants (fire-and-forget, no confirmation)
 All major functions have `_async` variants that set `request_confirmation=False`:
 `get_or_create_output_tile_set_async`, `create_tile_set_async`, `create_channel_async`, `send_single_tile_output_async`, `create_image_layer_async`, `create_annotation_async`, `store_file_async`, `append_notes_async`
@@ -249,6 +256,29 @@ Scripts can embed default parameters in comments (parsed by Maps):
 ```
 
 Options: `RunMode` (manual/whencompleted/whencompletedblocking/live/liveasync), `ScriptMode` (batch/singletiles), `ScriptParameters` (any string), `PrepareImages` (channel indices, image layer only).
+
+### Script Helper Parameters (UI Parameter Field)
+
+The Script Helper UI has a **Params** field that passes a string to the script via `request.script_parameters`. The format is **semicolon-delimited key=value pairs**:
+
+```
+color=red;threshold=128;mode=fast
+```
+
+Use `MapsBridge.parse_parameters()` to convert this string into a Python dict:
+
+```python
+params = MapsBridge.parse_parameters(request.script_parameters)
+color = params.get("color", "red")
+threshold = int(params.get("threshold", "128"))
+mode = params.get("mode", "fast")
+```
+
+**Rules for generated scripts:**
+- When a script needs user-configurable values, use `MapsBridge.parse_parameters(request.script_parameters)` to read them.
+- Always provide sensible defaults via `.get("key", "default")` so scripts work even with an empty parameter string.
+- The UI auto-detects `params.get("key", "default")` calls and pre-populates the Params field with the keys and defaults.
+- Do **not** parse `request.script_parameters` manually — always use `MapsBridge.parse_parameters()`.
 
 ### Example: Tile Set Processing (Single Tile Mode)
 
