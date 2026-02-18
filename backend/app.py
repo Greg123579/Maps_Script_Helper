@@ -1920,6 +1920,7 @@ Async variants (fire-and-forget, no confirmation):
 ✅ ALWAYS use from_stdin() to read the initial request
 ✅ ALWAYS save outputs to tempfile.gettempdir() subfolder
 ✅ ALWAYS use MapsBridge output methods (create_image_layer, send_single_tile_output)
+✅ ALWAYS produce at least one output file (usually an image) — scripts that produce NO output files WILL FAIL
 ✅ ALWAYS use try/except for error handling around file I/O
 ✅ ALWAYS call log_info/log_warning/log_error for debugging
 ✅ ALWAYS create channels BEFORE sending tile output to them
@@ -1980,6 +1981,14 @@ IN HELPER APP (testing):
 ✅ from_stdin() scans /input folder (simulated)
 ✅ Output functions copy to /output/ for preview
 ✅ Annotations/tile sets logged (not visually created)
+
+🚨 CRITICAL: Your script MUST produce at least one file in /output/.
+MapsBridge output methods (send_single_tile_output, create_image_layer, store_file)
+automatically copy files to /output/. If your script only creates annotations or logs
+without saving an image or file, it will fail with "No output files produced".
+The most common output is a processed image (e.g., result.png via create_image_layer
+or send_single_tile_output). Even analysis-only scripts should save a summary image,
+chart, or text report to /output/.
 
 IN REAL MAPS (production):
 ✅ from_stdin() reads JSON from stdin (real MAPS data)
@@ -3975,6 +3984,56 @@ def admin_search_users(
     users = db.query(User).filter(User.email.isnot(None)).all()
     matches = [u for u in users if u.email and q in u.email.lower()]
     return {"users": [{"id": u.id, "name": u.name, "email": u.email} for u in matches]}
+
+
+@app.get("/api/admin/user-report")
+def admin_user_report(
+    _: bool = Depends(verify_admin_password),
+    db: Session = Depends(get_db),
+):
+    """Admin-only: summary of all users with script/execution counts."""
+    from sqlalchemy import func
+
+    users = db.query(User).order_by(User.created_at.desc()).all()
+
+    script_counts = dict(
+        db.query(UserScript.user_id, func.count(UserScript.id))
+        .filter(UserScript.is_user_created == True)
+        .group_by(UserScript.user_id)
+        .all()
+    )
+
+    exec_counts = dict(
+        db.query(ExecutionSession.user_id, func.count(ExecutionSession.id))
+        .group_by(ExecutionSession.user_id)
+        .all()
+    )
+
+    last_active = dict(
+        db.query(ExecutionSession.user_id, func.max(ExecutionSession.started_at))
+        .group_by(ExecutionSession.user_id)
+        .all()
+    )
+
+    rows = []
+    for u in users:
+        la = last_active.get(u.id)
+        rows.append({
+            "id": u.id,
+            "name": u.name,
+            "email": u.email or "",
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "script_count": script_counts.get(u.id, 0),
+            "execution_count": exec_counts.get(u.id, 0),
+            "last_active": la.isoformat() if la else None,
+        })
+
+    return {
+        "users": rows,
+        "total_users": len(rows),
+        "total_scripts": sum(r["script_count"] for r in rows),
+        "total_executions": sum(r["execution_count"] for r in rows),
+    }
 
 
 @app.post("/api/admin/verify")

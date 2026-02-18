@@ -39,5 +39,9 @@ outputs/
 # Logs
 logs/
 
+# Uploaded assets and generated thumbnails
+assets/uploads/
+assets/thumbnails/
+
 # Node modules (if any)
 node_modules/

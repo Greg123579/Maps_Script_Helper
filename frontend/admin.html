@@ -24,7 +24,7 @@
       border-radius: 12px;
       border: 1px solid #374151;
       padding: 32px;
-      max-width: 520px;
+      max-width: 780px;
       width: 100%;
     }
     h1 {
@@ -38,9 +38,7 @@
       font-size: 0.9rem;
       margin-bottom: 24px;
     }
-    .form-group {
-      margin-bottom: 20px;
-    }
+    .form-group { margin-bottom: 20px; }
     label {
       display: block;
       font-size: 0.875rem;
@@ -59,10 +57,7 @@
       background: #0f1115;
       color: #e5e7eb;
     }
-    input:focus {
-      outline: none;
-      border-color: #3b82f6;
-    }
+    input:focus { outline: none; border-color: #3b82f6; }
     textarea {
       width: 100%;
       min-height: 140px;
@@ -99,18 +94,9 @@
       padding: 10px 18px;
       transition: all 0.2s;
     }
-    .btn-primary {
-      background: #3b82f6;
-      color: white;
-      border: none;
-    }
-    .btn-primary:hover {
-      background: #2563eb;
-    }
-    .btn-primary:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
+    .btn-primary { background: #3b82f6; color: white; border: none; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
     .btn-danger {
       background: transparent;
       color: #ef4444;
@@ -119,26 +105,7 @@
       width: 100%;
       justify-content: center;
     }
-    .btn-danger:hover {
-      background: rgba(239, 68, 68, 0.15);
-    }
-    .actions {
-      margin-top: 28px;
-      padding-top: 24px;
-      border-top: 1px solid #374151;
-    }
-    .actions h2 {
-      font-size: 0.95rem;
-      font-weight: 600;
-      color: #f3f4f6;
-      margin: 0 0 16px 0;
-    }
-    .actions .btn-danger {
-      margin-top: 12px;
-    }
-    .actions .btn-danger:first-of-type {
-      margin-top: 0;
-    }
+    .btn-danger:hover { background: rgba(239, 68, 68, 0.15); }
     .message {
       padding: 12px;
       border-radius: 8px;
@@ -155,8 +122,77 @@
       color: #86efac;
       border: 1px solid rgba(34, 197, 94, 0.3);
     }
-    .locked .actions { display: none; }
-    .unlocked .gate { display: none; }
+
+    /* Tabs */
+    .tab-bar {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid #374151;
+      margin-bottom: 24px;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
+      color: #9ca3af;
+      padding: 10px 18px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .tab-btn:hover { color: #e5e7eb; }
+    .tab-btn.active {
+      color: #3b82f6;
+      border-bottom-color: #3b82f6;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* User report */
+    .report-summary {
+      display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+    }
+    .report-stat {
+      flex: 1; min-width: 100px;
+      background: #1a1f2e; border-radius: 8px; padding: 12px 14px;
+      text-align: center; border: 1px solid #374151;
+    }
+    .report-stat .num { font-size: 1.5rem; font-weight: 600; color: #3b82f6; }
+    .report-stat .lbl { font-size: 0.75rem; color: #9ca3af; margin-top: 2px; }
+    .report-table-wrap {
+      max-height: 380px; overflow-y: auto; border-radius: 8px;
+      border: 1px solid #374151;
+    }
+    .report-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .report-table th {
+      position: sticky; top: 0; background: #1a1f2e;
+      text-align: left; padding: 8px 10px; color: #9ca3af;
+      font-weight: 500; border-bottom: 1px solid #374151;
+      white-space: nowrap; cursor: pointer; user-select: none;
+    }
+    .report-table th:hover { color: #e5e7eb; }
+    .report-table th .sort-arrow { font-size: 0.7rem; margin-left: 3px; }
+    .report-table td {
+      padding: 7px 10px; border-bottom: 1px solid rgba(55,65,81,0.4);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 160px;
+    }
+    .report-table tr:hover td { background: rgba(255,255,255,0.03); }
+
+    /* Section headers inside tabs */
+    .section-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #f3f4f6;
+      margin: 0 0 16px 0;
+    }
+    .section-divider {
+      margin-top: 28px;
+      padding-top: 24px;
+      border-top: 1px solid #374151;
+    }
   </style>
 </head>
 <body>
@@ -164,7 +200,8 @@
     <h1>Admin</h1>
     <p class="subtitle">Maps Script Helper</p>
 
-    <div class="gate">
+    <!-- Login gate -->
+    <div id="gate">
       <form id="loginForm" onsubmit="return unlock(event)">
         <div class="form-group">
           <label for="password">Admin password</label>
@@ -177,44 +214,93 @@
       </form>
     </div>
 
-    <div class="actions" style="display:none">
-      <h2>Reset user password</h2>
-      <p style="color:#9ca3af;font-size:0.85rem;margin:0 0 12px 0">
-        Search by email, select a user, then reset. An 8-character password is generated and an email is created for you to copy and send.
-      </p>
-      <div class="form-group" style="margin-bottom:8px">
-        <label for="searchEmail">Search by email</label>
-        <div style="display:flex;gap:8px">
-          <input type="email" id="searchEmail" placeholder="e.g. john@company.com" style="flex:1" onkeydown="if(event.key==='Enter')searchUsers()" />
-          <button type="button" class="btn-primary" onclick="searchUsers()">Search</button>
-        </div>
-      </div>
-      <div id="searchResults" style="margin-bottom:12px;min-height:0"></div>
-      <button type="button" class="btn-primary" id="resetBtn" onclick="resetUserPassword()" style="width:100%;justify-content:center" disabled>
-        <span class="material-symbols-outlined" style="font-size:20px">key</span>
-        Reset password
-      </button>
-      <div id="emailResult" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid #374151">
-        <label style="margin-bottom:8px;display:block">Copy this email and send to the user:</label>
-        <textarea id="emailBody" readonly></textarea>
-        <button type="button" class="btn-primary" onclick="copyEmailToClipboard()" style="margin-top:8px;width:100%;justify-content:center">
-          <span class="material-symbols-outlined" style="font-size:20px">content_copy</span>
-          Copy to clipboard
+    <!-- Tabbed content (hidden until unlocked) -->
+    <div id="adminContent" style="display:none">
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('users')">
+          <span class="material-symbols-outlined" style="font-size:18px;vertical-align:middle;margin-right:4px">group</span>Users
+        </button>
+        <button class="tab-btn" onclick="switchTab('manage')">
+          <span class="material-symbols-outlined" style="font-size:18px;vertical-align:middle;margin-right:4px">settings</span>Password &amp; Data
         </button>
       </div>
 
-      <h2 style="margin-top:28px">Danger zone</h2>
-      <p style="color:#9ca3af;font-size:0.85rem;margin:0 0 16px 0">
-        These actions permanently delete data and cannot be undone.
-      </p>
-      <button type="button" class="btn-danger" onclick="resetUserData()">
-        <span class="material-symbols-outlined" style="font-size:20px">delete_forever</span>
-        Reset All User Data
-      </button>
-      <button type="button" class="btn-danger" onclick="freshDatabase()">
-        <span class="material-symbols-outlined" style="font-size:20px">refresh</span>
-        Deploy Fresh
-      </button>
+      <!-- ═══ Users Tab ═══ -->
+      <div id="tab-users" class="tab-panel active">
+        <p style="color:#9ca3af;font-size:0.85rem;margin:0 0 16px 0">
+          View all registered users and their script/execution activity.
+        </p>
+        <button type="button" class="btn-primary" id="loadReportBtn" onclick="loadReport()">
+          <span class="material-symbols-outlined" style="font-size:20px">assessment</span>
+          Load User Report
+        </button>
+        <div id="reportLoading" style="color:#9ca3af;font-size:0.85rem;margin-top:12px;display:none">Loading report...</div>
+        <div id="reportContent" style="display:none;margin-top:16px">
+          <div class="report-summary">
+            <div class="report-stat"><div class="num" id="statUsers">0</div><div class="lbl">Users</div></div>
+            <div class="report-stat"><div class="num" id="statScripts">0</div><div class="lbl">Scripts</div></div>
+            <div class="report-stat"><div class="num" id="statExecs">0</div><div class="lbl">Executions</div></div>
+          </div>
+          <div class="report-table-wrap">
+            <table class="report-table">
+              <thead>
+                <tr>
+                  <th onclick="sortReport('name')">Name <span class="sort-arrow" id="sort-name"></span></th>
+                  <th onclick="sortReport('email')">Email <span class="sort-arrow" id="sort-email"></span></th>
+                  <th onclick="sortReport('script_count')">Scripts <span class="sort-arrow" id="sort-script_count"></span></th>
+                  <th onclick="sortReport('execution_count')">Runs <span class="sort-arrow" id="sort-execution_count"></span></th>
+                  <th onclick="sortReport('last_active')">Last Active <span class="sort-arrow" id="sort-last_active"></span></th>
+                  <th onclick="sortReport('created_at')">Joined <span class="sort-arrow" id="sort-created_at"></span></th>
+                </tr>
+              </thead>
+              <tbody id="reportBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ Password & Data Tab ═══ -->
+      <div id="tab-manage" class="tab-panel">
+        <h2 class="section-title">Reset user password</h2>
+        <p style="color:#9ca3af;font-size:0.85rem;margin:0 0 12px 0">
+          Search by email, select a user, then reset. An 8-character password is generated and an email is created for you to copy and send.
+        </p>
+        <div class="form-group" style="margin-bottom:8px">
+          <label for="searchEmail">Search by email</label>
+          <div style="display:flex;gap:8px">
+            <input type="email" id="searchEmail" placeholder="e.g. john@company.com" style="flex:1" onkeydown="if(event.key==='Enter')searchUsers()" />
+            <button type="button" class="btn-primary" onclick="searchUsers()">Search</button>
+          </div>
+        </div>
+        <div id="searchResults" style="margin-bottom:12px;min-height:0"></div>
+        <button type="button" class="btn-primary" id="resetBtn" onclick="resetUserPassword()" style="width:100%;justify-content:center" disabled>
+          <span class="material-symbols-outlined" style="font-size:20px">key</span>
+          Reset password
+        </button>
+        <div id="emailResult" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid #374151">
+          <label style="margin-bottom:8px;display:block">Copy this email and send to the user:</label>
+          <textarea id="emailBody" readonly></textarea>
+          <button type="button" class="btn-primary" onclick="copyEmailToClipboard()" style="margin-top:8px;width:100%;justify-content:center">
+            <span class="material-symbols-outlined" style="font-size:20px">content_copy</span>
+            Copy to clipboard
+          </button>
+        </div>
+
+        <div class="section-divider">
+          <h2 class="section-title" style="color:#ef4444">Danger zone</h2>
+          <p style="color:#9ca3af;font-size:0.85rem;margin:0 0 16px 0">
+            These actions permanently delete data and cannot be undone.
+          </p>
+          <button type="button" class="btn-danger" onclick="resetUserData()">
+            <span class="material-symbols-outlined" style="font-size:20px">delete_forever</span>
+            Reset All User Data
+          </button>
+          <button type="button" class="btn-danger" onclick="freshDatabase()">
+            <span class="material-symbols-outlined" style="font-size:20px">refresh</span>
+            Deploy Fresh
+          </button>
+        </div>
+      </div>
     </div>
 
     <div id="message"></div>
@@ -230,6 +316,20 @@
       el.style.display = text ? 'block' : 'none';
     }
 
+    /* ── Tabs ── */
+    function switchTab(id) {
+      document.querySelectorAll('.tab-btn').forEach((btn, i) => {
+        const panels = ['users', 'manage'];
+        const active = panels[i] === id;
+        btn.classList.toggle('active', active);
+      });
+      document.querySelectorAll('.tab-panel').forEach(p => {
+        p.classList.toggle('active', p.id === 'tab-' + id);
+      });
+      showMessage('');
+    }
+
+    /* ── Auth ── */
     async function unlock(e) {
       e.preventDefault();
       const input = document.getElementById('password');
@@ -250,10 +350,8 @@
         const data = await r.json().catch(() => ({}));
         if (r.ok && data.ok) {
           adminPassword = pwd;
-          document.getElementById('card').classList.add('unlocked');
-          document.getElementById('card').classList.remove('locked');
-          document.querySelector('.actions').style.display = 'block';
-          document.querySelector('.gate').style.display = 'none';
+          document.getElementById('gate').style.display = 'none';
+          document.getElementById('adminContent').style.display = 'block';
           showMessage('Unlocked.', 'success');
           setTimeout(() => showMessage(''), 2000);
         } else {
@@ -270,6 +368,72 @@
       return { 'Content-Type': 'application/json', 'X-Admin-Password': adminPassword };
     }
 
+    /* ── User Report ── */
+    let reportData = [];
+    let reportSortCol = 'script_count';
+    let reportSortAsc = false;
+    let reportLoaded = false;
+
+    async function loadReport() {
+      const btn = document.getElementById('loadReportBtn');
+      const loading = document.getElementById('reportLoading');
+      btn.disabled = true;
+      loading.style.display = 'block';
+      loading.textContent = 'Loading report...';
+      try {
+        const r = await fetch('/api/admin/user-report', { headers: { 'X-Admin-Password': adminPassword } });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { loading.textContent = 'Failed to load report.'; btn.disabled = false; return; }
+        reportData = data.users || [];
+        reportLoaded = true;
+        document.getElementById('statUsers').textContent = data.total_users || 0;
+        document.getElementById('statScripts').textContent = data.total_scripts || 0;
+        document.getElementById('statExecs').textContent = data.total_executions || 0;
+        renderReport();
+        loading.style.display = 'none';
+        document.getElementById('reportContent').style.display = 'block';
+        btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:20px">refresh</span> Refresh Report';
+        btn.disabled = false;
+      } catch (err) {
+        loading.textContent = 'Error: ' + err.message;
+        btn.disabled = false;
+      }
+    }
+
+    function renderReport() {
+      const tbody = document.getElementById('reportBody');
+      const rows = [...reportData];
+      rows.sort((a, b) => {
+        let va = a[reportSortCol], vb = b[reportSortCol];
+        if (va == null) va = '';
+        if (vb == null) vb = '';
+        if (typeof va === 'number') return reportSortAsc ? va - vb : vb - va;
+        return reportSortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+      });
+      tbody.innerHTML = rows.map(u => {
+        const la = u.last_active ? new Date(u.last_active).toLocaleDateString() : '\u2014';
+        const joined = u.created_at ? new Date(u.created_at).toLocaleDateString() : '\u2014';
+        return `<tr>
+          <td title="${escapeHtml(u.name)}">${escapeHtml(u.name)}</td>
+          <td title="${escapeHtml(u.email)}">${escapeHtml(u.email) || '\u2014'}</td>
+          <td style="text-align:center">${u.script_count}</td>
+          <td style="text-align:center">${u.execution_count}</td>
+          <td>${la}</td>
+          <td>${joined}</td>
+        </tr>`;
+      }).join('');
+      document.querySelectorAll('.sort-arrow').forEach(el => el.textContent = '');
+      const arrow = document.getElementById('sort-' + reportSortCol);
+      if (arrow) arrow.textContent = reportSortAsc ? '\u25B2' : '\u25BC';
+    }
+
+    function sortReport(col) {
+      if (reportSortCol === col) { reportSortAsc = !reportSortAsc; }
+      else { reportSortCol = col; reportSortAsc = col === 'name' || col === 'email'; }
+      renderReport();
+    }
+
+    /* ── Password reset ── */
     let selectedUserId = null;
 
     async function searchUsers() {
@@ -324,10 +488,7 @@
     }
 
     async function resetUserPassword() {
-      if (!selectedUserId) {
-        showMessage('Select a user first.', 'error');
-        return;
-      }
+      if (!selectedUserId) { showMessage('Select a user first.', 'error'); return; }
       showMessage('');
       document.getElementById('emailResult').style.display = 'none';
       try {
@@ -362,8 +523,9 @@
       }).catch(() => showMessage('Copy failed.', 'error'));
     }
 
+    /* ── Danger zone ── */
     async function resetUserData() {
-      if (!confirm('⚠️ RESET ALL USER DATA?\n\nThis will permanently delete:\n• All user accounts\n• All saved scripts (user-created)\n• All uploaded images (user-uploaded)\n\nStarter scripts and library images will be kept.\n\nThis action CANNOT be undone!\n\nAre you absolutely sure?')) return;
+      if (!confirm('\u26A0\uFE0F RESET ALL USER DATA?\n\nThis will permanently delete:\n\u2022 All user accounts\n\u2022 All saved scripts (user-created)\n\u2022 All uploaded images (user-uploaded)\n\nStarter scripts and library images will be kept.\n\nThis action CANNOT be undone!\n\nAre you absolutely sure?')) return;
       showMessage('');
       try {
         const r = await fetch('/api/admin/reset-user-data', {
@@ -382,7 +544,7 @@
     }
 
     async function freshDatabase() {
-      if (!confirm('⚠️ DEPLOY FRESH?\n\nThis will:\n• Drop ALL tables and recreate them\n• Re-seed default library scripts\n\nResult: empty users, empty scripts, starter scripts only.\n\nUse this to start with a clean database (e.g. before first deployment).\n\nThis action CANNOT be undone!\n\nContinue?')) return;
+      if (!confirm('\u26A0\uFE0F DEPLOY FRESH?\n\nThis will:\n\u2022 Drop ALL tables and recreate them\n\u2022 Re-seed default library scripts\n\nResult: empty users, empty scripts, starter scripts only.\n\nUse this to start with a clean database (e.g. before first deployment).\n\nThis action CANNOT be undone!\n\nContinue?')) return;
       showMessage('');
       try {
         const r = await fetch('/api/admin/fresh-database', {
